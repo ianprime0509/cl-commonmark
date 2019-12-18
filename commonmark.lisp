@@ -4,7 +4,13 @@
 
 (in-package :commonmark)
 
-;;; Document structure (nodes) and context
+;;; Parsing context
+
+;;; The context object is used to provide contextual information and
+;;; operations for implementations of ACCEPT-LINE. For example, the
+;;; MAKE-BLOCK method allows any node to start a new block with a line
+;;; without hardcoding assumptions about the block starts into each
+;;; ACCEPT-LINE method.
 
 (defclass context ()
   ((block-starts
@@ -68,6 +74,31 @@ Return nil if no block can be created (e.g. if LINE is empty)."))
             (let ((reg-list (map 'list #'identity registers)))
               (return (apply function context reg-list)))))))
 
+;;; Generic node methods
+
+(defgeneric accept-line (line block context)
+  (:documentation "Ask BLOCK to accept LINE as additional contents.
+Return two values, ACTION and OBJECT. ACTION is a request for the
+parent of this block to perform some action with OBJECT. Valid actions
+are as follopws:
+
+nil - do nothing with OBJECT.
+
+:ACCEPT-CHILD - accept OBJECT as a new child node, if possible."))
+
+(defun handle-new-block (line context)
+  "Return the values expected for ACCEPT-LINE given that LINE needs to be made into a new block.
+In other words, return (VALUES :ACCEPT-CHILD (MAKE-BLOCK LINE
+CONTEXT)) if MAKE-BLOCK returns non-nil or (VALUES NIL NIL) otherwise.
+This is a helper function for ACCEPT-LINE implementations."
+  (let ((new-block (make-block line context)))
+    (values (when new-block :accept-child) new-block)))
+
+(defgeneric close-block (block)
+  (:documentation "Close BLOCK, indicating that it can no longer accept additional contents."))
+
+;;; Node definitions
+
 (defclass node ()
   ()
   (:documentation "A node in the AST of a Markdown document."))
@@ -80,6 +111,15 @@ Return nil if no block can be created (e.g. if LINE is empty)."))
     :accessor closedp
     :documentation "Whether the block is closed."))
   (:documentation "A structural element of a document."))
+
+(defmethod accept-line :around (line (block block-node) context)
+  "Prevent BLOCK from accepting new lines if it is closed."
+  (if (not (closedp block))
+      (call-next-method)
+      (handle-new-block line context)))
+
+(defmethod close-block ((block block-node))
+  (setf (closedp block) t))
 
 (defclass text-block-node (block-node)
   ((text
@@ -104,9 +144,29 @@ Return nil if no block can be created (e.g. if LINE is empty)."))
     (with-accessors ((text text) (closed closedp)) object
       (format stream "~s :CLOSED ~s" text closed))))
 
+(defmethod accept-line (line (block text-block-node) context)
+  (unless (zerop (length (text block)))
+    (vector-push-extend #\Newline (text block)))
+  ;; TODO: there's probably a more efficient way to do this
+  (loop for char across line
+     do (vector-push-extend char (text block)))
+  (values nil nil))
+
 (defclass raw-paragraph (text-block-node)
   ()
   (:documentation "A raw paragraph containing only un-processed text."))
+
+(defmethod accept-line (line (block raw-paragraph) context)
+  (when (blankp line)
+    (close-block block)
+    (return-from accept-line (values nil nil)))
+  ;; Check for blocks that can interrupt paragraphs
+  (let ((interrupting-block (make-block line context t)))
+    (when interrupting-block
+      (close-block block)
+      (return-from accept-line (values :accept-child interrupting-block))))
+  ;; Otherwise, we have an ordinary text line
+  (call-next-method (strip-indentation line) block context))
 
 (defclass code-block (text-block-node)
   ((info-string
@@ -120,6 +180,25 @@ Return nil if no block can be created (e.g. if LINE is empty)."))
 (defclass indented-code-block (code-block)
   ()
   (:documentation "An indented code block (block of code where each line is preceded by a tab or four spaces)."))
+
+(defmethod accept-line (line (block indented-code-block) context)
+  (multiple-value-bind (stripped-line indentation)
+      (strip-indentation line 4)
+    (if (or (>= indentation 4) (blankp line))
+        (call-next-method stripped-line block context)
+        (progn
+          (close-block block)
+          (handle-new-block line context)))))
+
+(defmethod close-block :after ((block indented-code-block))
+  "Remove leading and trailing blank lines from BLOCK."
+  ;; For some reason, the Commonmark reference implementation adds a
+  ;; newline to the end of every code block:
+  ;; https://github.com/commonmark/commonmark-spec/issues/501
+  (setf (text block) (concatenate 'string
+                                  (remove-surrounding-blank-lines (text block))
+                                  "
+")))
 
 (defclass container-block-node (block-node)
   ((children
@@ -144,81 +223,6 @@ Return nil if no block can be created (e.g. if LINE is empty)."))
     (with-accessors ((children children) (closed closedp)) object
       (format stream "~s :CLOSED ~s" children closed))))
 
-(defclass document (container-block-node)
-  ()
-  (:documentation "The top-level node in the document AST."))
-
-;;; Line handlers
-
-(defgeneric accept-line (line block context)
-  (:documentation "Ask BLOCK to accept LINE as additional contents.
-Return two values, ACTION and OBJECT. ACTION is a request for the
-parent of this block to perform some action with OBJECT. Valid actions
-are as follows:
-
-nil - do nothing with OBJECT.
-
-:ACCEPT-CHILD - accept OBJECT as a new child node, if possible."))
-
-(defgeneric close-block (block)
-  (:documentation "Close BLOCK, indicating that it can no longer accept additional contents."))
-
-(defun handle-new-block (line context)
-  "Return the values expected for ACCEPT-LINE given that LINE needs to be made into a new block.
-In other words, return (VALUES :ACCEPT-CHILD (MAKE-BLOCK LINE
-CONTEXT)) if MAKE-BLOCK returns non-nil or (VALUES NIL NIL)
-otherwise."
-  (let ((new-block (make-block line context)))
-    (values (when new-block :accept-child) new-block)))
-
-(defmethod accept-line :around (line (block block-node) context)
-  "Prevent BLOCK from accepting new lines if it is closed."
-  (if (not (closedp block))
-      (call-next-method)
-      (handle-new-block line context)))
-
-(defmethod close-block ((block block-node))
-  (setf (closedp block) t))
-
-(defmethod accept-line (line (block text-block-node) context)
-  (unless (zerop (length (text block)))
-    (vector-push-extend #\Newline (text block)))
-  ;; TODO: there's probably a more efficient way to do this
-  (loop for char across line
-     do (vector-push-extend char (text block)))
-  (values nil nil))
-
-(defmethod accept-line (line (block raw-paragraph) context)
-  (when (blankp line)
-    (close-block block)
-    (return-from accept-line (values nil nil)))
-  ;; Check for blocks that can interrupt paragraphs
-  (let ((interrupting-block (make-block line context t)))
-    (when interrupting-block
-      (close-block block)
-      (return-from accept-line (values :accept-child interrupting-block))))
-  ;; Otherwise, we have an ordinary text line
-  (call-next-method (strip-indentation line) block context))
-
-(defmethod accept-line (line (block indented-code-block) context)
-  (multiple-value-bind (stripped-line indentation)
-      (strip-indentation line 4)
-    (if (or (>= indentation 4) (blankp line))
-        (call-next-method stripped-line block context)
-        (progn
-          (close-block block)
-          (handle-new-block line context)))))
-
-(defmethod close-block :after ((block indented-code-block))
-  "Remove leading and trailing blank lines from BLOCK."
-  ;; For some reason, the Commonmark reference implementation adds a
-  ;; newline to the end of every code block:
-  ;; https://github.com/commonmark/commonmark-spec/issues/501
-  (setf (text block) (concatenate 'string
-                                  (remove-surrounding-blank-lines (text block))
-                                  "
-")))
-
 (defmethod accept-line (line (block container-block-node) context)
   "Ask the last child of BLOCK to accept LINE or create a new child from LINE if there are none."
   (if (zerop (length (children block)))
@@ -238,6 +242,10 @@ otherwise."
   (loop for child across (children block)
      unless (closedp child)
      do (close-block child)))
+
+(defclass document (container-block-node)
+  ()
+  (:documentation "The top-level node in the document AST."))
 
 ;;; Helper functions
 
