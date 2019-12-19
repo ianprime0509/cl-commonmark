@@ -76,10 +76,17 @@ but the keys will be converted to efficient scanners."
 (defun make-standard-context ()
   "Return a new CONTEXT using the standard CommonMark block starts."
   (make-context
-   `(("^ {0,3}([*_-])(?:[ \\t]*\\1[ \\t]*){2,}"
+   `(("^ {0,3}([*_-])(?:[ \\t]*\\1[ \\t]*){2,}$"
       ,(lambda (context break-string)
          (declare (ignore context break-string))
          (make-instance 'thematic-break))
+      t)
+     ("^ {0,3}(#{1,6})[ \\t]+(.*?)(?:[ \\t]#*[ \\t]*)?$"
+      ,(lambda (context opening text)
+         (declare (ignore context))
+         (make-instance 'heading
+                        :level (length opening)
+                        :text (strip-indentation text)))
       t)
      ("^(?: {0,3}\\t| {4})(.*[^ \\t].*)$"
       ,(lambda (context text)
@@ -172,6 +179,26 @@ This is a helper function for ACCEPT-LINE implementations."
 (defclass thematic-break (atomic-block-node)
   ()
   (:documentation "A thematic break (horizontal rule) separating parts of a document."))
+
+(defclass heading (atomic-block-node)
+  ((level
+    :initarg :level
+    :initform (error "Must provide heading level")
+    :type (integer 1 6)
+    :accessor level
+    :documentation "The level of the heading, between 1 and 6 (inclusive).")
+   (text
+    :initarg :text
+    :initform (error "Must provide heading text")
+    :type string
+    :accessor text
+    :documentation "The text of the heading."))
+  (:documentation "A heading of any type (ATX or setext)."))
+
+(defmethod print-object ((block heading) stream)
+  (print-unreadable-object (block stream :type t)
+    (with-accessors ((level level) (text text) (closed closedp)) block
+      (format stream "~s ~s :CLOSED ~s" level text closed))))
 
 (defclass text-block-node (block-node)
   ((text

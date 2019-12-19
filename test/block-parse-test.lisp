@@ -9,18 +9,24 @@
   (equal (format nil "~s" s1)
          (format nil "~s" s2)))
 
-(defmacro make-document (closed &body children)
+(defmacro make-document (&body children)
   `(make-instance 'document
-                  :closed ,closed
+                  :closed t
                   :children
                   (flet ((raw-paragraph (text &rest rest)
                            (apply #'make-instance 'raw-paragraph
+                                  :closed t
                                   :text text rest))
                          (indented-code-block (text &rest rest)
                            (apply #'make-instance 'indented-code-block
+                                  :closed t
                                   :text text rest))
                          (thematic-break (&rest rest)
-                           (apply #'make-instance 'thematic-break rest)))
+                           (apply #'make-instance 'thematic-break
+                                  :closed t rest))
+                         (heading (level text &rest rest)
+                           (apply #'make-instance 'heading
+                                  :level level :text text rest)))
                     (vector ,@children))))
 
 (def-suite block-parsing)
@@ -32,10 +38,10 @@
          (parse-block-structure "line one
 line two
 line three")))
-    (is (print= (make-document t
+    (is (print= (make-document
                   (raw-paragraph "line one
 line two
-line three" :closed t))
+line three"))
                 document))))
 
 (test multiple-paragraphs
@@ -46,11 +52,11 @@ line two
 line three
 
 line four")))
-    (is (print= (make-document t
+    (is (print= (make-document
                   (raw-paragraph "line one
-line two" :closed t)
-                  (raw-paragraph "line three" :closed t)
-                  (raw-paragraph "line four" :closed t))
+line two")
+                  (raw-paragraph "line three")
+                  (raw-paragraph "line four"))
                 document))))
 
 (test paragraphs-with-indentation
@@ -62,13 +68,13 @@ line two" :closed t)
 line five
 
    line six")))
-    (is (print= (make-document t
+    (is (print= (make-document
                   (raw-paragraph "line one
 line two
 line three
 line four
-line five" :closed t)
-                  (raw-paragraph "line six" :closed t))
+line five")
+                  (raw-paragraph "line six"))
                 document))))
 
 (test indented-code-blocks
@@ -89,13 +95,13 @@ this is a paragraph
   
     those spaces above are not part of the block  
     but these trailing spaces are:  ")))
-    (is (print= (make-document t
+    (is (print= (make-document
                   (indented-code-block "this is code
     this is indented code
 end indentation
-" :closed t)
+")
                   (raw-paragraph "this is a paragraph
-this is more paragraph" :closed t)
+this is more paragraph")
                   (indented-code-block "this is code with a tab
 	this is code with spaces and a tab
 
@@ -105,7 +111,7 @@ weird mixture of spaces and a tab gets handled correctly
 
 those spaces above are not part of the block  
 but these trailing spaces are:  
-" :closed t))
+"))
                 document))))
 
 (test thematic-breaks
@@ -125,20 +131,55 @@ __
 ___
 ---
 * * * *	* ")))
-    (is (print= (make-document t
-                  (thematic-break :closed t)
-                  (raw-paragraph "paragraph text" :closed t)
-                  (thematic-break :closed t)
-                  (thematic-break :closed t)
-                  (thematic-break :closed t)
+    (is (print= (make-document
+                  (thematic-break)
+                  (raw-paragraph "paragraph text")
+                  (thematic-break)
+                  (thematic-break)
+                  (thematic-break)
                   (indented-code-block "***
-" :closed t)
-                  (raw-paragraph "more paragraph" :closed t)
-                  (raw-paragraph "_" :closed t)
-                  (raw-paragraph "__" :closed t)
-                  (thematic-break :closed t)
-                  (thematic-break :closed t)
-                  (thematic-break :closed t))
+")
+                  (raw-paragraph "more paragraph")
+                  (raw-paragraph "_")
+                  (raw-paragraph "__")
+                  (thematic-break)
+                  (thematic-break)
+                  (thematic-break))
+                document))))
+
+(test atx-headings
+  (let ((document
+         (parse-block-structure "# heading 1
+ ## heading 2   
+  ### heading 3	
+   ####     heading 4
+    ##### not a heading
+##### heading 5
+###### heading 6 ######
+
+paragraph text
+# heading # 
+## heading 2 ########	
+### heading 3 #
+#### heading 4 \\#
+#not a heading
+#\\# also not a heading")))
+    (is (print= (make-document
+                  (heading 1 "heading 1")
+                  (heading 2 "heading 2")
+                  (heading 3 "heading 3")
+                  (heading 4 "heading 4")
+                  (indented-code-block "##### not a heading
+")
+                  (heading 5 "heading 5")
+                  (heading 6 "heading 6")
+                  (raw-paragraph "paragraph text")
+                  (heading 1 "heading")
+                  (heading 2 "heading 2")
+                  (heading 3 "heading 3")
+                  (heading 4 "heading 4 \\#")
+                  (raw-paragraph "#not a heading
+#\\# also not a heading"))
                 document))))
 
 ;;;; block-parse-test.lisp ends here

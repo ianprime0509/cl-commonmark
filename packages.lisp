@@ -18,6 +18,7 @@
    :closedp
 
    :thematic-break
+   :heading
 
    :text-block-node
    :text
