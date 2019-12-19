@@ -18,7 +18,9 @@
                                   :text text rest))
                          (indented-code-block (text &rest rest)
                            (apply #'make-instance 'indented-code-block
-                                  :text text rest)))
+                                  :text text rest))
+                         (thematic-break (&rest rest)
+                           (apply #'make-instance 'thematic-break rest)))
                     (vector ,@children))))
 
 (def-suite block-parsing)
@@ -104,6 +106,39 @@ weird mixture of spaces and a tab gets handled correctly
 those spaces above are not part of the block  
 but these trailing spaces are:  
 " :closed t))
+                document))))
+
+(test thematic-breaks
+  (let ((document
+         (parse-block-structure "***
+paragraph text
+ ***
+  ***
+   ***
+    ***
+more paragraph
+
+_
+
+__
+
+___
+---
+* * * *	* ")))
+    (is (print= (make-document t
+                  (thematic-break :closed t)
+                  (raw-paragraph "paragraph text" :closed t)
+                  (thematic-break :closed t)
+                  (thematic-break :closed t)
+                  (thematic-break :closed t)
+                  (indented-code-block "***
+" :closed t)
+                  (raw-paragraph "more paragraph" :closed t)
+                  (raw-paragraph "_" :closed t)
+                  (raw-paragraph "__" :closed t)
+                  (thematic-break :closed t)
+                  (thematic-break :closed t)
+                  (thematic-break :closed t))
                 document))))
 
 ;;;; block-parse-test.lisp ends here
