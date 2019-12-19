@@ -24,8 +24,8 @@
                          (thematic-break (&rest rest)
                            (apply #'make-instance 'thematic-break
                                   :closed t rest))
-                         (heading (level text &rest rest)
-                           (apply #'make-instance 'heading
+                         (raw-heading (level text &rest rest)
+                           (apply #'make-instance 'raw-heading
                                   :level level :text text rest)))
                     (vector ,@children))))
 
@@ -165,19 +165,19 @@ paragraph text
 #not a heading
 #\\# also not a heading")))
     (is (print= (make-document
-                  (heading 1 "heading 1")
-                  (heading 2 "heading 2")
-                  (heading 3 "heading 3")
-                  (heading 4 "heading 4")
+                  (raw-heading 1 "heading 1")
+                  (raw-heading 2 "heading 2")
+                  (raw-heading 3 "heading 3")
+                  (raw-heading 4 "heading 4")
                   (indented-code-block "##### not a heading
 ")
-                  (heading 5 "heading 5")
-                  (heading 6 "heading 6")
+                  (raw-heading 5 "heading 5")
+                  (raw-heading 6 "heading 6")
                   (raw-paragraph "paragraph text")
-                  (heading 1 "heading")
-                  (heading 2 "heading 2")
-                  (heading 3 "heading 3")
-                  (heading 4 "heading 4 \\#")
+                  (raw-heading 1 "heading")
+                  (raw-heading 2 "heading 2")
+                  (raw-heading 3 "heading 3")
+                  (raw-heading 4 "heading 4 \\#")
                   (raw-paragraph "#not a heading
 #\\# also not a heading"))
                 document))))

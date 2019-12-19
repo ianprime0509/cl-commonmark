@@ -84,7 +84,7 @@ but the keys will be converted to efficient scanners."
      ("^ {0,3}(#{1,6})[ \\t]+(.*?)(?:[ \\t]#*[ \\t]*)?$"
       ,(lambda (context opening text)
          (declare (ignore context))
-         (make-instance 'heading
+         (make-instance 'raw-heading
                         :level (length opening)
                         :text (strip-indentation text)))
       t)
@@ -180,7 +180,7 @@ This is a helper function for ACCEPT-LINE implementations."
   ()
   (:documentation "A thematic break (horizontal rule) separating parts of a document."))
 
-(defclass heading (atomic-block-node)
+(defclass raw-heading (atomic-block-node)
   ((level
     :initarg :level
     :initform (error "Must provide heading level")
@@ -193,9 +193,9 @@ This is a helper function for ACCEPT-LINE implementations."
     :type string
     :accessor text
     :documentation "The text of the heading."))
-  (:documentation "A heading of any type (ATX or setext)."))
+  (:documentation "A heading of any type (ATX or setext) containing un-processed text."))
 
-(defmethod print-object ((block heading) stream)
+(defmethod print-object ((block raw-heading) stream)
   (print-unreadable-object (block stream :type t)
     (with-accessors ((level level) (text text) (closed closedp)) block
       (format stream "~s ~s :CLOSED ~s" level text closed))))
