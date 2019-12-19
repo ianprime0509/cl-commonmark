@@ -154,20 +154,25 @@ are as follopws:
 
 nil - do nothing with OBJECT.
 
-:ACCEPT-CHILD - accept OBJECT as a new child node, if possible.
+:ACCEPT - accept OBJECT as a new child node, if possible.
 
-:REPLACE - replace this block with OBJECT."))
+:REPLACE-SELF - replace this block with OBJECT.
+
+:DELETE-SELF - do nothing with OBJECT and delete this block."))
 
 (defun handle-new-block (line context)
   "Return the values expected for ACCEPT-LINE given that LINE needs to be made into a new block.
-In other words, return (VALUES :ACCEPT-CHILD (MAKE-BLOCK LINE
+In other words, return (VALUES :ACCEPT (MAKE-BLOCK LINE
 CONTEXT)) if MAKE-BLOCK returns non-nil or (VALUES NIL NIL) otherwise.
 This is a helper function for ACCEPT-LINE implementations."
   (let ((new-block (make-block line context)))
-    (values (when new-block :accept-child) new-block)))
+    (values (when new-block :accept) new-block)))
 
-(defgeneric close-block (block)
-  (:documentation "Close BLOCK, indicating that it can no longer accept additional contents."))
+(defgeneric close-block (block context)
+  (:documentation "Close BLOCK, indicating that it can no longer accept additional contents.
+Like ACCEPT-LINE, CONTEXT is supplied so that nodes can perform
+contextually sensitive operations (such as adding link reference
+definitions) when closing themselves."))
 
 ;;; Node definitions
 
@@ -196,7 +201,8 @@ directly."))
       (call-next-method)
       (handle-new-block line context)))
 
-(defmethod close-block ((block block-node))
+(defmethod close-block ((block block-node) context)
+  (declare (ignore context))
   (setf (slot-value block 'closed) t))
 
 (defclass atomic-block-node (block-node)
@@ -205,10 +211,12 @@ directly."))
 
 (defmethod initialize-instance :after ((block atomic-block-node) &key)
   "Ensure atomic blocks are always closed."
-  (close-block block))
+  (setf (slot-value block 'closed) t))
 
 (defmethod accept-line (line (block atomic-block-node) context)
-  (error "This block cannot accept additional contents"))
+  "A stub implementation of ACCEPT-LINE.
+This method will never be called because of the around method defined
+for BLOCK-NODE.")
 
 (defclass thematic-break (atomic-block-node)
   ()
@@ -234,8 +242,9 @@ directly."))
     (with-accessors ((level level) (text text) (closed closedp)) block
       (format stream "~s ~s :CLOSED ~s" level text closed))))
 
-(defmethod close-block :after ((block raw-heading))
+(defmethod close-block :after ((block raw-heading) context)
   "Strip whitespace surrounding the heading text."
+  (declare (ignore context))
   (setf (text block) (strip-whitespace (text block))))
 
 (defclass text-block-node (block-node)
@@ -275,28 +284,31 @@ directly."))
 
 (defmethod accept-line (line (block raw-paragraph) context)
   (when (blankp line)
-    (close-block block)
+    (close-block block context)
     (return-from accept-line (values nil nil)))
   ;; Check for setext heading underlines if we're not processing a
-  ;; lazy continuation line
-  (unless (lazy-continuation-p context)
+  ;; lazy continuation line and if we already have some content in the
+  ;; paragraph
+  (unless (or (lazy-continuation-p context)
+              (zerop (length (text block))))
     (let ((level (parse-setext-underline line context)))
       (when level
-        (close-block block)
+        (close-block block context)
         (return-from accept-line
-          (values :replace (make-instance 'raw-heading
+          (values :replace-self (make-instance 'raw-heading
                                           :text (text block)
                                           :level level))))))
   ;; Check for blocks that can interrupt paragraphs
   (let ((interrupting-block (make-block line context t)))
     (when interrupting-block
-      (close-block block)
-      (return-from accept-line (values :accept-child interrupting-block))))
+      (close-block block context)
+      (return-from accept-line (values :accept interrupting-block))))
   ;; Otherwise, we have an ordinary text line
   (call-next-method (strip-indentation line) block context))
 
-(defmethod close-block :after ((block raw-paragraph))
+(defmethod close-block :after ((block raw-paragraph) context)
   "Strip whitespace surrounding paragraph text."
+  (declare (ignore context))
   (setf (text block) (strip-whitespace (text block))))
 
 (defclass code-block (text-block-node)
@@ -318,11 +330,12 @@ directly."))
     (if (or (>= indentation 4) (blankp line))
         (call-next-method stripped-line block context)
         (progn
-          (close-block block)
+          (close-block block context)
           (handle-new-block line context)))))
 
-(defmethod close-block :after ((block indented-code-block))
+(defmethod close-block :after ((block indented-code-block) context)
   "Remove leading and trailing blank lines from BLOCK."
+  (declare (ignore context))
   ;; For some reason, the Commonmark reference implementation adds a
   ;; newline to the end of every code block:
   ;; https://github.com/commonmark/commonmark-spec/issues/501
@@ -365,16 +378,17 @@ directly."))
         (multiple-value-bind (action object)
             (accept-line line last-child context)
           (ecase action
-            (:accept-child (vector-push-extend object (children block)))
-            (:replace (setf (aref (children block) last-idx) object))
+            (:accept (vector-push-extend object (children block)))
+            (:replace-self (setf (aref (children block) last-idx) object))
+            (:delete-self (vector-pop (children block)))
             ((nil))))))
   (values nil nil))
 
-(defmethod close-block :after ((block container-block-node))
+(defmethod close-block :after ((block container-block-node) context)
   "Close all unclosed children of BLOCK."
   (loop for child across (children block)
      unless (closedp child)
-     do (close-block child)))
+     do (close-block child context)))
 
 (defclass document (container-block-node)
   ()
@@ -491,7 +505,7 @@ first pass of the full parsing process."))
      for line = (read-markdown-line input)
      while line
      do (accept-line line document context)
-     finally (close-block document)
+     finally (close-block document context)
        (return document)))
 
 (defmethod parse-block-structure ((input string)
