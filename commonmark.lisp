@@ -39,7 +39,6 @@ The original value of each place will be saved and restored on exit."
     :type list
     :accessor block-starts
     :documentation "A list of patterns identifying blocks by their starting lines.
-
 Each element of the list is a list of the form (SCANNER FUNCTION
 CAN-INTERRUPT).
 
@@ -52,6 +51,22 @@ scanners match a line, MAKE-BLOCK will return NIL.
 MAKE-BLOCK is also invoked for each line being added to a paragraph,
 but with different behavior: only block starts where CAN-INTERRUPT is
 non-nil will be considered.")
+   (setext-underlines
+    :initarg :setext-underlines
+    :initform ()
+    :type list
+    :accessor setext-underlines
+    :documentation "A list of patterns matching setext heading underlines.
+Each element of the list is a list of the form (SCANNER LEVEL).
+
+When a new line is added to a paragraph, if it is possible to
+interpret the line as a setext heading underline (that is, if the line
+is not a lazy continuation line), the list is traversed in order
+similarly to the processing of BLOCK-STARTS. If SCANNER matches, the
+line is interpreted as a setext heading underline for a heading of
+level LEVEL.
+
+This behavior is controlled by the PARSE-SETEXT-UNDERLINE function.")
    (lazy-continuation
     :initarg :lazy-continuation
     :initform nil
@@ -62,16 +77,22 @@ This affects whether certain block structures can be recognized in a
 paragraph, such as a setext heading line."))
   (:documentation "Context for parsing a document."))
 
-(defun make-context (block-starts)
-  "Return a new CONTEXT using BLOCK-STARTS.
-BLOCK-STARTS is a list as described in the documentation of CONTEXT,
-but the keys will be converted to efficient scanners."
+(defun make-context (block-starts setext-underlines)
+  "Return a new CONTEXT using BLOCK-STARTS and SETEXT-UNDERLINES.
+BLOCK-STARTS and SETEXT-UNDERLINES are lists as described in the
+documentation of CONTEXT, but the keys will be converted to efficient
+scanners."
   (let ((block-starts
          (loop for (regex function can-interrupt) in block-starts
             collect (list (ppcre:create-scanner regex)
                           function
-                          can-interrupt))))
-    (make-instance 'context :block-starts block-starts)))
+                          can-interrupt)))
+        (setext-underlines
+         (loop for (regex level) in setext-underlines
+            collect (list (ppcre:create-scanner regex) level))))
+    (make-instance 'context
+                   :block-starts block-starts
+                   :setext-underlines setext-underlines)))
 
 (defun make-standard-context ()
   "Return a new CONTEXT using the standard CommonMark block starts."
@@ -86,7 +107,7 @@ but the keys will be converted to efficient scanners."
          (declare (ignore context))
          (make-instance 'raw-heading
                         :level (length opening)
-                        :text (strip-indentation text)))
+                        :text text))
       t)
      ("^(?: {0,3}\\t| {4})(.*[^ \\t].*)$"
       ,(lambda (context text)
@@ -96,16 +117,17 @@ but the keys will be converted to efficient scanners."
      ("^(.*[^ \\t].*)$"
       ,(lambda (context text)
          (declare (ignore context))
-         (make-instance 'raw-paragraph :text (strip-indentation text)))
-      nil))))
+         (make-instance 'raw-paragraph :text text))
+      nil))
+   '(("^ {0,3}[ \\t]*=+[ \\t]*" 1)
+     ("^ {0,3}[ \\t]*-+[ \\t]*" 2))))
 
-(defgeneric make-block (line context &optional in-paragraph)
-  (:documentation "Make a new block from LINE using CONTEXT. If LINE
-represents several nested blocks (for example, a paragraph within a
-block quote), return the top-level block containing the children.
-Return nil if no block can be created (e.g. if LINE is empty)."))
-
-(defmethod make-block (line (context context) &optional in-paragraph)
+(defun make-block (line context &optional in-paragraph)
+  "Make a new block from LINE using CONTEXT.
+If LINE represents several nested blocks (for example, a paragraph
+within a block quote), return the top-level block containing the
+children. Return nil if no block can be created (e.g. if LINE is
+empty)."
   (loop for (scanner function can-interrupt) in (block-starts context)
      when (or (not in-paragraph) can-interrupt)
      do (multiple-value-bind (match registers)
@@ -113,6 +135,14 @@ Return nil if no block can be created (e.g. if LINE is empty)."))
           (when match
             (let ((reg-list (map 'list #'identity registers)))
               (return (apply function context reg-list)))))))
+
+(defun parse-setext-underline (line context)
+  "Attempt to parse LINE as a setext heading underline using CONTEXT.
+Return the heading level (between 1 and 6, inclusive) or nil if LINE
+is not a setext heading underline."
+  (loop for (scanner level) in (setext-underlines context)
+     when (ppcre:scan scanner line)
+     return level))
 
 ;;; Generic node methods
 
@@ -124,7 +154,9 @@ are as follopws:
 
 nil - do nothing with OBJECT.
 
-:ACCEPT-CHILD - accept OBJECT as a new child node, if possible."))
+:ACCEPT-CHILD - accept OBJECT as a new child node, if possible.
+
+:REPLACE - replace this block with OBJECT."))
 
 (defun handle-new-block (line context)
   "Return the values expected for ACCEPT-LINE given that LINE needs to be made into a new block.
@@ -148,8 +180,10 @@ This is a helper function for ACCEPT-LINE implementations."
     :initarg :closed
     :initform nil
     :type boolean
-    :accessor closedp
-    :documentation "Whether the block is closed."))
+    :reader closedp
+    :documentation "Whether the block is closed.
+To close a block, use CLOSE-BLOCK rather than setting this slot
+directly."))
   (:documentation "A structural element of a document."))
 
 (defmethod print-object ((block block-node) stream)
@@ -163,7 +197,7 @@ This is a helper function for ACCEPT-LINE implementations."
       (handle-new-block line context)))
 
 (defmethod close-block ((block block-node))
-  (setf (closedp block) t))
+  (setf (slot-value block 'closed) t))
 
 (defclass atomic-block-node (block-node)
   ()
@@ -199,6 +233,10 @@ This is a helper function for ACCEPT-LINE implementations."
   (print-unreadable-object (block stream :type t)
     (with-accessors ((level level) (text text) (closed closedp)) block
       (format stream "~s ~s :CLOSED ~s" level text closed))))
+
+(defmethod close-block :after ((block raw-heading))
+  "Strip whitespace surrounding the heading text."
+  (setf (text block) (strip-whitespace (text block))))
 
 (defclass text-block-node (block-node)
   ((text
@@ -239,6 +277,16 @@ This is a helper function for ACCEPT-LINE implementations."
   (when (blankp line)
     (close-block block)
     (return-from accept-line (values nil nil)))
+  ;; Check for setext heading underlines if we're not processing a
+  ;; lazy continuation line
+  (unless (lazy-continuation-p context)
+    (let ((level (parse-setext-underline line context)))
+      (when level
+        (close-block block)
+        (return-from accept-line
+          (values :replace (make-instance 'raw-heading
+                                          :text (text block)
+                                          :level level))))))
   ;; Check for blocks that can interrupt paragraphs
   (let ((interrupting-block (make-block line context t)))
     (when interrupting-block
@@ -246,6 +294,10 @@ This is a helper function for ACCEPT-LINE implementations."
       (return-from accept-line (values :accept-child interrupting-block))))
   ;; Otherwise, we have an ordinary text line
   (call-next-method (strip-indentation line) block context))
+
+(defmethod close-block :after ((block raw-paragraph))
+  "Strip whitespace surrounding paragraph text."
+  (setf (text block) (strip-whitespace (text block))))
 
 (defclass code-block (text-block-node)
   ((info-string
@@ -308,11 +360,13 @@ This is a helper function for ACCEPT-LINE implementations."
       (let ((new-block (make-block line context)))
         (when new-block
           (vector-push-extend new-block (children block))))
-      (let ((last-child (aref (children block) (1- (length (children block))))))
+      (let* ((last-idx (1- (length (children block))))
+             (last-child (aref (children block) last-idx)))
         (multiple-value-bind (action object)
             (accept-line line last-child context)
           (ecase action
             (:accept-child (vector-push-extend object (children block)))
+            (:replace (setf (aref (children block) last-idx) object))
             ((nil))))))
   (values nil nil))
 
@@ -413,6 +467,12 @@ were actually removed."
               (loop for i from start below (length line)
                  do (write-char (aref line i) stripped))))))
     (values stripped spaces-stripped)))
+
+(defun strip-whitespace (text)
+  "Remove leading and trailing whitespace from TEXT."
+  (string-trim (vector #\Space #\Tab #\Newline (code-char #xB)
+                       (code-char #xC) #\Return)
+               text))
 
 (defun next-tab-stop (position tab-width)
   "Return the position of the next tab stop of width TAB-WIDTH starting at POSITION."

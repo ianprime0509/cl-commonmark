@@ -182,4 +182,30 @@ paragraph text
 #\\# also not a heading"))
                 document))))
 
+(test setext-headings
+  (let ((document
+         (parse-block-structure "heading 1
+===
+heading 2
+   --------------
+another heading
+ -
+
+how about
+a multi-line heading
+=
+
+this isn't a heading
+
+---")))
+    (is (print= (make-document
+                  (raw-heading 1 "heading 1")
+                  (raw-heading 2 "heading 2")
+                  (raw-heading 2 "another heading")
+                  (raw-heading 1 "how about
+a multi-line heading")
+                  (raw-paragraph "this isn't a heading")
+                  (thematic-break))
+                document))))
+
 ;;;; block-parse-test.lisp ends here
