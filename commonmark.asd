@@ -9,7 +9,8 @@
   :licence "MIT"
   :depends-on ("alexandria" "cl-ppcre" "uiop")
   :components ((:file "packages")
-               (:file "commonmark" :depends-on ("packages"))))
+               (:file "utils" :depends-on ("packages"))
+               (:file "commonmark" :depends-on ("packages" "utils"))))
 
 (defsystem "commonmark/test"
   :depends-on ("commonmark" "fiveam")
