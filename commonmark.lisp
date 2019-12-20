@@ -103,11 +103,14 @@ scanners."
 (defun make-standard-context ()
   "Return a new CONTEXT using the standard CommonMark block starts."
   (make-context
-   `(("^ {0,3}([*_-])(?:[ \\t]*\\1[ \\t]*){2,}$"
+   `(
+     ;; Thematic breaks
+     ("^ {0,3}([*_-])(?:[ \\t]*\\1[ \\t]*){2,}$"
       ,(lambda (context break-string)
          (declare (ignore context break-string))
          (make-instance 'thematic-break))
       t)
+     ;; ATX headings
      ("^ {0,3}(#{1,6})[ \\t]+(.*?)(?:[ \\t]#*[ \\t]*)?$"
       ,(lambda (context opening text)
          (declare (ignore context))
@@ -115,17 +118,19 @@ scanners."
                         :level (length opening)
                         :text (vector text)))
       t)
-     ("^((?: {0,3}\\t| {4}).*[^ \\t].*)$"
+     ;; Indented code blocks
+     ("^(?: {0,3}\\t| {4})(.*[^ \\t].*)$"
       ,(lambda (context text)
-         (let ((block (make-instance 'indented-code-block)))
-           (accept-line text block context)
-           block))
+         (declare (ignore context))
+         (make-instance 'indented-code-block
+                        :text (vector text)))
       nil)
-     ("^(.*[^ \\t].*)$"
+     ;; Paragraphs
+     ("^[ \\t]*(.*[^ \\t].*)$"
       ,(lambda (context text)
-         (let ((block (make-instance 'paragraph)))
-           (accept-line text block context)
-           block))
+         (declare (ignore context))
+         (make-instance 'paragraph
+                        :text (vector text)))
       nil))
    '(("^ {0,3}[ \\t]*=+[ \\t]*" 1)
      ("^ {0,3}[ \\t]*-+[ \\t]*" 2))))
