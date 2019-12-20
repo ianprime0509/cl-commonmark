@@ -6,6 +6,7 @@
 
 (defpackage :commonmark
   (:use :cl)
+  (:import-from :alexandria :emptyp :first-elt :last-elt)
   (:export
 
    :context
@@ -18,12 +19,12 @@
    :closedp
 
    :thematic-break
-   :raw-heading
+   :heading
 
    :text-block-node
    :text
 
-   :raw-paragraph
+   :paragraph
 
    :code-block
    :info-string

@@ -13,20 +13,19 @@
   `(make-instance 'document
                   :closed t
                   :children
-                  (flet ((raw-paragraph (text &rest rest)
-                           (apply #'make-instance 'raw-paragraph
-                                  :closed t
-                                  :text text rest))
+                  (flet ((paragraph (text &rest rest)
+                           (apply #'make-instance 'paragraph
+                                  :closed t :text (vector text) rest))
                          (indented-code-block (text &rest rest)
                            (apply #'make-instance 'indented-code-block
                                   :closed t
-                                  :text text rest))
+                                  :text (vector text) rest))
                          (thematic-break (&rest rest)
                            (apply #'make-instance 'thematic-break
                                   :closed t rest))
-                         (raw-heading (level text &rest rest)
-                           (apply #'make-instance 'raw-heading
-                                  :level level :text text rest)))
+                         (heading (level text &rest rest)
+                           (apply #'make-instance 'heading
+                                  :level level :text (vector text) rest)))
                     (vector ,@children))))
 
 (def-suite block-parsing)
@@ -39,7 +38,7 @@
 line two
 line three")))
     (is (print= (make-document
-                  (raw-paragraph "line one
+                  (paragraph "line one
 line two
 line three"))
                 document))))
@@ -53,10 +52,10 @@ line three
 
 line four")))
     (is (print= (make-document
-                  (raw-paragraph "line one
+                  (paragraph "line one
 line two")
-                  (raw-paragraph "line three")
-                  (raw-paragraph "line four"))
+                  (paragraph "line three")
+                  (paragraph "line four"))
                 document))))
 
 (test paragraphs-with-indentation
@@ -69,12 +68,12 @@ line five
 
    line six")))
     (is (print= (make-document
-                  (raw-paragraph "line one
+                  (paragraph "line one
 line two
 line three
 line four
 line five")
-                  (raw-paragraph "line six"))
+                  (paragraph "line six"))
                 document))))
 
 (test indented-code-blocks
@@ -100,7 +99,7 @@ this is a paragraph
     this is indented code
 end indentation
 ")
-                  (raw-paragraph "this is a paragraph
+                  (paragraph "this is a paragraph
 this is more paragraph")
                   (indented-code-block "this is code with a tab
 	this is code with spaces and a tab
@@ -133,15 +132,15 @@ ___
 * * * *	* ")))
     (is (print= (make-document
                   (thematic-break)
-                  (raw-paragraph "paragraph text")
+                  (paragraph "paragraph text")
                   (thematic-break)
                   (thematic-break)
                   (thematic-break)
                   (indented-code-block "***
 ")
-                  (raw-paragraph "more paragraph")
-                  (raw-paragraph "_")
-                  (raw-paragraph "__")
+                  (paragraph "more paragraph")
+                  (paragraph "_")
+                  (paragraph "__")
                   (thematic-break)
                   (thematic-break)
                   (thematic-break))
@@ -165,20 +164,20 @@ paragraph text
 #not a heading
 #\\# also not a heading")))
     (is (print= (make-document
-                  (raw-heading 1 "heading 1")
-                  (raw-heading 2 "heading 2")
-                  (raw-heading 3 "heading 3")
-                  (raw-heading 4 "heading 4")
+                  (heading 1 "heading 1")
+                  (heading 2 "heading 2")
+                  (heading 3 "heading 3")
+                  (heading 4 "heading 4")
                   (indented-code-block "##### not a heading
 ")
-                  (raw-heading 5 "heading 5")
-                  (raw-heading 6 "heading 6")
-                  (raw-paragraph "paragraph text")
-                  (raw-heading 1 "heading")
-                  (raw-heading 2 "heading 2")
-                  (raw-heading 3 "heading 3")
-                  (raw-heading 4 "heading 4 \\#")
-                  (raw-paragraph "#not a heading
+                  (heading 5 "heading 5")
+                  (heading 6 "heading 6")
+                  (paragraph "paragraph text")
+                  (heading 1 "heading")
+                  (heading 2 "heading 2")
+                  (heading 3 "heading 3")
+                  (heading 4 "heading 4 \\#")
+                  (paragraph "#not a heading
 #\\# also not a heading"))
                 document))))
 
@@ -199,12 +198,12 @@ this isn't a heading
 
 ---")))
     (is (print= (make-document
-                  (raw-heading 1 "heading 1")
-                  (raw-heading 2 "heading 2")
-                  (raw-heading 2 "another heading")
-                  (raw-heading 1 "how about
+                  (heading 1 "heading 1")
+                  (heading 2 "heading 2")
+                  (heading 2 "another heading")
+                  (heading 1 "how about
 a multi-line heading")
-                  (raw-paragraph "this isn't a heading")
+                  (paragraph "this isn't a heading")
                   (thematic-break))
                 document))))
 

@@ -7,7 +7,7 @@
   :version "0.1.0"
   :author "Ian Johnson <ianprime0509@gmail.com>"
   :licence "MIT"
-  :depends-on ("cl-ppcre" "uiop")
+  :depends-on ("alexandria" "cl-ppcre" "uiop")
   :components ((:file "packages")
                (:file "commonmark" :depends-on ("packages"))))
 

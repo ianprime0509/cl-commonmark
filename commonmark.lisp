@@ -24,6 +24,12 @@ The original value of each place will be saved and restored on exit."
               for original-value in original-value-symbols
               collect `(setf ,place ,original-value))))))
 
+;;; Constants
+
+(defparameter *whitespace-chars*
+  (vector #\Space #\Tab #\Newline (code-char #xB) (code-char #xC) #\Return)
+  "A vector containing all the characters considered to be whitespace.")
+
 ;;; Parsing context
 
 ;;; The context object is used to provide contextual information and
@@ -105,19 +111,21 @@ scanners."
      ("^ {0,3}(#{1,6})[ \\t]+(.*?)(?:[ \\t]#*[ \\t]*)?$"
       ,(lambda (context opening text)
          (declare (ignore context))
-         (make-instance 'raw-heading
+         (make-instance 'heading
                         :level (length opening)
-                        :text text))
+                        :text (vector text)))
       t)
-     ("^(?: {0,3}\\t| {4})(.*[^ \\t].*)$"
+     ("^((?: {0,3}\\t| {4}).*[^ \\t].*)$"
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'indented-code-block :text text))
+         (let ((block (make-instance 'indented-code-block)))
+           (accept-line text block context)
+           block))
       nil)
      ("^(.*[^ \\t].*)$"
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'raw-paragraph :text text))
+         (let ((block (make-instance 'paragraph)))
+           (accept-line text block context)
+           block))
       nil))
    '(("^ {0,3}[ \\t]*=+[ \\t]*" 1)
      ("^ {0,3}[ \\t]*-+[ \\t]*" 2))))
@@ -180,6 +188,8 @@ definitions) when closing themselves."))
   ()
   (:documentation "A node in the AST of a Markdown document."))
 
+;;; Block nodes
+
 (defclass block-node (node)
   ((closed
     :initarg :closed
@@ -216,13 +226,14 @@ directly."))
 (defmethod accept-line (line (block atomic-block-node) context)
   "A stub implementation of ACCEPT-LINE.
 This method will never be called because of the around method defined
-for BLOCK-NODE.")
+for BLOCK-NODE."
+  (values nil nil))
 
 (defclass thematic-break (atomic-block-node)
   ()
   (:documentation "A thematic break (horizontal rule) separating parts of a document."))
 
-(defclass raw-heading (atomic-block-node)
+(defclass heading (atomic-block-node)
   ((level
     :initarg :level
     :initform (error "Must provide heading level")
@@ -232,38 +243,37 @@ for BLOCK-NODE.")
    (text
     :initarg :text
     :initform (error "Must provide heading text")
-    :type string
+    :type (vector (or string inline-node))
     :accessor text
     :documentation "The text of the heading."))
-  (:documentation "A heading of any type (ATX or setext) containing un-processed text."))
+  (:documentation "A heading of any type (ATX or setext) containing inline content."))
 
-(defmethod print-object ((block raw-heading) stream)
+(defmethod print-object ((block heading) stream)
   (print-unreadable-object (block stream :type t)
     (with-accessors ((level level) (text text) (closed closedp)) block
       (format stream "~s ~s :CLOSED ~s" level text closed))))
 
-(defmethod close-block :after ((block raw-heading) context)
+(defmethod close-block :after ((block heading) context)
   "Strip whitespace surrounding the heading text."
   (declare (ignore context))
-  (setf (text block) (strip-whitespace (text block))))
+  (delete-whitespace (text block)))
 
 (defclass text-block-node (block-node)
   ((text
     :initarg :text
-    :initform ""
-    :type string
+    :initform (make-array 0
+                          :element-type '(or string inline-node)
+                          :adjustable t
+                          :fill-pointer 0)
+    :type (vector (or string inline-node))
     :accessor text
     :documentation "The text of the paragraph."))
-  (:documentation "A block containing only textual content."))
+  (:documentation "A block containing inline content (including text)."))
 
-(defmethod initialize-instance :after ((block text-block-node) &key)
-  "Ensure the text block's text is an adjustable array."
-  (with-slots (text) block
-    (setf text (make-array (length text)
-                           :element-type 'character
-                           :adjustable t
-                           :fill-pointer (length text)
-                           :initial-contents text))))
+(defmethod initialize-object :after ((block text-block-node) &key)
+  "Ensure the block's text vector is adjustable."
+  (setf (text block)
+        (make-adjustable (text block) '(or string inline-node))))
 
 (defmethod print-object ((object text-block-node) stream)
   (print-unreadable-object (object stream :type t)
@@ -271,18 +281,23 @@ for BLOCK-NODE.")
       (format stream "~s :CLOSED ~s" text closed))))
 
 (defmethod accept-line (line (block text-block-node) context)
-  (unless (zerop (length (text block)))
-    (vector-push-extend #\Newline (text block)))
-  ;; TODO: there's probably a more efficient way to do this
-  (loop for char across line
-     do (vector-push-extend char (text block)))
+  (with-accessors ((text text)) block
+    ;; Ensure we have a text string to append to
+    (when (or (emptyp text) (not (stringp (last-elt text))))
+      (vector-push-extend "" text))
+    (setf (last-elt text)
+          (concatenate 'string
+                       (last-elt text)
+                       (unless (emptyp (last-elt text))
+                         (string #\Newline))
+                       line)))
   (values nil nil))
 
-(defclass raw-paragraph (text-block-node)
+(defclass paragraph (text-block-node)
   ()
-  (:documentation "A raw paragraph containing only un-processed text."))
+  (:documentation "A paragraph."))
 
-(defmethod accept-line (line (block raw-paragraph) context)
+(defmethod accept-line (line (block paragraph) context)
   (when (blankp line)
     (close-block block context)
     (return-from accept-line (values nil nil)))
@@ -295,9 +310,9 @@ for BLOCK-NODE.")
       (when level
         (close-block block context)
         (return-from accept-line
-          (values :replace-self (make-instance 'raw-heading
-                                          :text (text block)
-                                          :level level))))))
+          (values :replace-self (make-instance 'heading
+                                               :text (text block)
+                                               :level level))))))
   ;; Check for blocks that can interrupt paragraphs
   (let ((interrupting-block (make-block line context t)))
     (when interrupting-block
@@ -306,10 +321,10 @@ for BLOCK-NODE.")
   ;; Otherwise, we have an ordinary text line
   (call-next-method (strip-indentation line) block context))
 
-(defmethod close-block :after ((block raw-paragraph) context)
+(defmethod close-block :after ((block paragraph) context)
   "Strip whitespace surrounding paragraph text."
   (declare (ignore context))
-  (setf (text block) (strip-whitespace (text block))))
+  (delete-whitespace (text block)))
 
 (defclass code-block (text-block-node)
   ((info-string
@@ -336,13 +351,21 @@ for BLOCK-NODE.")
 (defmethod close-block :after ((block indented-code-block) context)
   "Remove leading and trailing blank lines from BLOCK."
   (declare (ignore context))
-  ;; For some reason, the Commonmark reference implementation adds a
-  ;; newline to the end of every code block:
-  ;; https://github.com/commonmark/commonmark-spec/issues/501
-  (setf (text block) (concatenate 'string
-                                  (remove-surrounding-blank-lines (text block))
-                                  "
-")))
+  (with-accessors ((text text)) block
+    (unless (zerop (length text))
+      (let ((start (first-elt text))
+            (end (last-elt text)))
+        (when (stringp start)
+          (setf (first-elt text) (remove-leading-blank-lines start)))
+        (when (stringp end)
+          (setf (last-elt text) (remove-trailing-blank-lines start)))))
+    ;; For some reason, the Commonmark reference implementation adds a
+    ;; newline to the end of every code block:
+    ;; https://github.com/commonmark/commonmark-spec/issues/501
+    (if (zerop (length text))
+        (vector-push-extend (string #\Newline) text)
+        (setf (last-elt text)
+              (concatenate 'string (last-elt text) (string #\Newline))))))
 
 (defclass container-block-node (block-node)
   ((children
@@ -369,18 +392,17 @@ for BLOCK-NODE.")
 
 (defmethod accept-line (line (block container-block-node) context)
   "Ask the last child of BLOCK to accept LINE or create a new child from LINE if there are none."
-  (if (zerop (length (children block)))
-      (let ((new-block (make-block line context)))
-        (when new-block
-          (vector-push-extend new-block (children block))))
-      (let* ((last-idx (1- (length (children block))))
-             (last-child (aref (children block) last-idx)))
+  (with-accessors ((children children)) block
+    (if (emptyp children)
+        (let ((new-block (make-block line context)))
+          (when new-block
+            (vector-push-extend new-block children)))
         (multiple-value-bind (action object)
-            (accept-line line last-child context)
+            (accept-line line (last-elt children) context)
           (ecase action
-            (:accept (vector-push-extend object (children block)))
-            (:replace-self (setf (aref (children block) last-idx) object))
-            (:delete-self (vector-pop (children block)))
+            (:accept (vector-push-extend object children))
+            (:replace-self (setf (last-elt children) object))
+            (:delete-self (vector-pop children))
             ((nil))))))
   (values nil nil))
 
@@ -394,21 +416,35 @@ for BLOCK-NODE.")
   ()
   (:documentation "The top-level node in the document AST."))
 
+;;; Inline nodes
+
+(defclass inline-node (node)
+  ()
+  (:documentation "An inline node."))
+
 ;;; Helper functions
 
 (defparameter *blank-line-scanner*
   (ppcre:create-scanner "^[ \\t]*$")
   "A scanner matching blank lines.")
 
-(defun whitespacep (char)
-  "Return non-nil if CHAR is a whitespace character."
-  (case char
-    ((#\Newline #\Space #\Tab) t)
-    (t nil)))
-
 (defun blankp (line)
   "Return non-nil if LINE is blank."
   (ppcre:scan *blank-line-scanner* line))
+
+(defun make-adjustable (vector
+                        &optional (element-type (array-element-type vector)))
+  "Ensure VECTOR is adjustable with a fill pointer and the given element type.
+Return VECTOR if it is already adjustable with a fill pointer or
+return a new vector with the same contents."
+  (if (and (adjustable-array-p vector)
+           (array-has-fill-pointer-p vector))
+      vector
+      (make-array (length vector)
+                  :element-type element-type
+                  :adjustable t
+                  :fill-pointer (length vector)
+                  :initial-contents vector)))
 
 (defun read-markdown-line (stream)
   "Read a line from STREAM.
@@ -426,26 +462,40 @@ file."
                         (return))
               (t (write-char char line)))))))
 
-(defun remove-surrounding-blank-lines (text)
-  "Remove leading and trailing blank lines from TEXT, returning the result."
-  (let ((start 0)
-        (end (length text)))
+(defun delete-whitespace (text)
+  "Trim leading and trailing whitespace from TEXT, which is a vector of raw text strings and inline nodes."
+  ;; I don't bother handling the case that the paragraph starts or
+  ;; ends with an inline node at this point in processing
+  (unless (zerop (length text))
+    (let ((start (first-elt text))
+          (end (last-elt text)))
+      (when (stringp start)
+        (setf (first-elt text)
+              (string-left-trim *whitespace-chars* start)))
+      (when (stringp end)
+        (setf (last-elt text)
+              (string-right-trim *whitespace-chars* end))))))
+
+(defun remove-leading-blank-lines (text)
+  "Remove leading blank lines from TEXT, returning the result."
+  (let ((start 0))
     (loop for i from 0 below (length text)
        for char across text
        when (eql #\Newline char)
        do (setf start (1+ i))
-       unless (whitespacep char)
+       unless (or (eql #\Space char) (eql #\Tab char))
        do (return))
+    (subseq text start)))
+
+(defun remove-trailing-blank-lines (text)
+  "Remove trailing blank lines from TEXT, returning the result."
+  (let ((end (length text)))
     (loop for i from (1- (length text)) downto 0
        when (eql #\Newline (aref text i))
        do (setf end i)
-       unless (whitespacep (aref text i))
+       unless (or (eql #\Space (aref text i)) (eql #\Tab (aref text i)))
        do (return))
-    (when (> start end)
-      ;; No non-whitespace characters in string
-      (setf start 0
-            end 0))
-    (subseq text start end)))
+    (subseq text 0 end)))
 
 (defun strip-indentation (line &optional spaces)
   "Strip up to SPACES of indentation from LINE or all leading indentation if SPACES is nil.
@@ -481,12 +531,6 @@ were actually removed."
               (loop for i from start below (length line)
                  do (write-char (aref line i) stripped))))))
     (values stripped spaces-stripped)))
-
-(defun strip-whitespace (text)
-  "Remove leading and trailing whitespace from TEXT."
-  (string-trim (vector #\Space #\Tab #\Newline (code-char #xB)
-                       (code-char #xC) #\Return)
-               text))
 
 (defun next-tab-stop (position tab-width)
   "Return the position of the next tab stop of width TAB-WIDTH starting at POSITION."
