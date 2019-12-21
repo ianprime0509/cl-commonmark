@@ -54,7 +54,7 @@ file."
                         (return))
               (t (write-char char line)))))))
 
-;;; Whitespace manipulation
+;;; Text manipulation
 
 (defparameter *blank-line-scanner*
   (ppcre:create-scanner "^[ \\t]*$")
@@ -68,19 +68,50 @@ file."
   "Return non-nil if LINE is blank."
   (ppcre:scan *blank-line-scanner* line))
 
+(defun add-raw-text (new-text text)
+  "Add NEW-TEXT to the end of TEXT.
+TEXT is a vector of raw text strings and inline nodes."
+  ;; Ensure we have a text string to append to
+  (when (or (emptyp text) (not (stringp (last-elt text))))
+    (vector-push-extend "" text))
+  (setf (last-elt text)
+        (concatenate 'string (last-elt text) new-text)))
+
 (defun delete-whitespace (text)
-  "Trim leading and trailing whitespace from TEXT, which is a vector of raw text strings and inline nodes."
-  ;; I don't bother handling the case that the paragraph starts or
-  ;; ends with an inline node at this point in processing
+  "Trim leading and trailing whitespace from TEXT.
+TEXT is a vector of raw text strings and inline nodes."
+  (delete-surrounding-characters text *whitespace-chars*))
+
+(defun delete-surrounding-characters (text characters)
+  "Trim leading and trailing characters in CHARACTERS from TEXT.
+TEXT is a vector of raw text strings and inline nodes."
+  ;; TODO: for now, I don't bother handling the case that the text
+  ;; starts or ends with an inline node
   (unless (zerop (length text))
     (let ((start (first-elt text))
           (end (last-elt text)))
       (when (stringp start)
         (setf (first-elt text)
-              (string-left-trim *whitespace-chars* start)))
+              (string-left-trim characters start)))
       (when (stringp end)
         (setf (last-elt text)
-              (string-right-trim *whitespace-chars* end))))))
+              (string-right-trim characters end))))))
+
+(defun delete-surrounding-blank-lines (text)
+  "Trim leading and trailing blank lines in TEXT.
+TEXT is a vector of raw text strings and inline nodes."
+  (unless (zerop (length text))
+    (let ((start (first-elt text))
+          (end (last-elt text)))
+      (when (stringp start)
+        (setf (first-elt text) (remove-leading-blank-lines start)))
+      (when (stringp end)
+        (setf (last-elt text) (remove-trailing-blank-lines start))))))
+
+(defun delete-surrounding-empty-lines (text)
+  "Trim leading and trailing empty lines in TEXT.
+TEXT is a vector of raw text strings and inline nodes."
+  (delete-surrounding-characters text #(#\Newline)))
 
 (defun remove-leading-blank-lines (text)
   "Remove leading blank lines from TEXT, returning the result."

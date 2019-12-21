@@ -30,6 +30,7 @@
    :info-string
 
    :indented-code-block
+   :fenced-code-block
 
    :container-block-node
    :children

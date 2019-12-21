@@ -92,6 +92,25 @@ scanners."
                         :level (length opening)
                         :text (vector text)))
       t)
+     ;; Fenced code blocks
+     ("^( {0,3})(`{3,})[ \\t]*([^`]*[^ \\t`])?[ \\t]*$"
+      ,(lambda (context indent fence info-string)
+         (declare (ignore context))
+         (make-instance 'fenced-code-block
+                        :info-string info-string
+                        :opening-fence-indentation (length indent)
+                        :opening-fence-length (length fence)
+                        :tilde-fence nil))
+      t)
+     ("^( {0,3})(~{3,})[ \\t]*(.*[^ \\t])?[ \\t]*$"
+      ,(lambda (context indent fence info-string)
+         (declare (ignore context))
+         (make-instance 'fenced-code-block
+                        :info-string info-string
+                        :opening-fence-indentation (length indent)
+                        :opening-fence-length (length fence)
+                        :tilde-fence t))
+      t)
      ;; Indented code blocks
      ("^(?: {0,3}\\t| {4})(.*[^ \\t].*)$"
       ,(lambda (context text)
@@ -261,15 +280,10 @@ for BLOCK-NODE."
 
 (defmethod accept-line (line (block text-block-node) context)
   (with-accessors ((text text)) block
-    ;; Ensure we have a text string to append to
-    (when (or (emptyp text) (not (stringp (last-elt text))))
-      (vector-push-extend "" text))
-    (setf (last-elt text)
-          (concatenate 'string
-                       (last-elt text)
-                       (unless (emptyp (last-elt text))
-                         (string #\Newline))
-                       line)))
+    (add-raw-text (concatenate 'string
+                               (unless (emptyp text) (string #\Newline))
+                               line)
+                  text))
   (values nil nil))
 
 (defclass paragraph (text-block-node)
@@ -331,20 +345,71 @@ for BLOCK-NODE."
   "Remove leading and trailing blank lines from BLOCK."
   (declare (ignore context))
   (with-accessors ((text text)) block
-    (unless (zerop (length text))
-      (let ((start (first-elt text))
-            (end (last-elt text)))
-        (when (stringp start)
-          (setf (first-elt text) (remove-leading-blank-lines start)))
-        (when (stringp end)
-          (setf (last-elt text) (remove-trailing-blank-lines start)))))
+    (delete-surrounding-blank-lines text)
     ;; For some reason, the Commonmark reference implementation adds a
     ;; newline to the end of every code block:
     ;; https://github.com/commonmark/commonmark-spec/issues/501
-    (if (zerop (length text))
-        (vector-push-extend (string #\Newline) text)
-        (setf (last-elt text)
-              (concatenate 'string (last-elt text) (string #\Newline))))))
+    (add-raw-text (string #\Newline) text)))
+
+(defclass fenced-code-block (code-block)
+  ((opening-fence-indentation
+    :initarg :opening-fence-indentation
+    :initform 0
+    :type (integer 0 3)
+    :reader opening-fence-indentation
+    :documentation "The number of spaces of indentation of the opening code fence.")
+   (opening-fence-length
+    :initarg :opening-fence-length
+    :initform (error "Must provide opening fence length")
+    :type (integer 3)
+    :reader opening-fence-length
+    :documentation "The length of the opening code fence.")
+   (tilde-fence
+    :initarg :tilde-fence
+    :initform (error "Must specify if this is a tilde code fence")
+    :type boolean
+    :reader tilde-fence-p
+    :documentation "Whether this block is fenced by tildes (if nil, backtick is the fence character)."))
+  (:documentation "A fenced code block (block of code surrounded by backtick or tilde fences)."))
+
+(defmethod print-object ((block fenced-code-block) stream)
+  (with-accessors ((closed closedp) (text text) (info info-string)
+                   (indent opening-fence-indentation)
+                   (length opening-fence-length)
+                   (tilde tilde-fence-p))
+      block
+    (print-unreadable-object (block stream :type t)
+      (format stream "~s :INFO-STRING ~s :OPENING-FENCE-INDENTATION ~s ~
+:OPENING-FENCE-LENGTH ~s :TILDE-FENCE ~s :CLOSED ~s"
+              text info indent length tilde closed))))
+
+(defparameter *backtick-closing-fence-pattern*
+  (ppcre:create-scanner "^ {0,3}(`+)[ \\t]*$")
+  "A scanner for closing backtick code fences.")
+
+(defparameter *tilde-closing-fence-pattern*
+  (ppcre:create-scanner "^ {0,3}(~+)[ \\t]*$")
+  "A scanner for closing tilde code fences.")
+
+(defmethod accept-line (line (block fenced-code-block) context)
+  (let ((closing-scanner (if (tilde-fence-p block)
+                             *tilde-closing-fence-pattern*
+                             *backtick-closing-fence-pattern*)))
+    (ppcre:register-groups-bind (fence) (closing-scanner line)
+      ;; See if we have a closing fence
+      (when (>= (length fence) (opening-fence-length block))
+        (close-block block context)
+        (return-from accept-line (values nil nil)))))
+  (call-next-method (strip-indentation line (opening-fence-indentation block))
+                    block context))
+
+(defmethod close-block :after ((block fenced-code-block) context)
+  "Remove leading and trailing empty lines from BLOCK."
+  (declare (ignore context))
+  (with-accessors ((text text)) block
+    (delete-surrounding-empty-lines text)
+    ;; Again, for some reason we need to add a newline
+    (add-raw-text (string #\Newline) text)))
 
 (defclass container-block-node (block-node)
   ((children

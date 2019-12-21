@@ -18,14 +18,22 @@
                                   :closed t :text (vector text) rest))
                          (indented-code-block (text &rest rest)
                            (apply #'make-instance 'indented-code-block
-                                  :closed t
-                                  :text (vector text) rest))
+                                  :closed t :text (vector text) rest))
                          (thematic-break (&rest rest)
                            (apply #'make-instance 'thematic-break
                                   :closed t rest))
                          (heading (level text &rest rest)
                            (apply #'make-instance 'heading
-                                  :level level :text (vector text) rest)))
+                                  :level level :text (vector text) rest))
+                         (fenced-code-block (info-string fence-length tilde
+                                                         text &rest rest)
+                           (apply #'make-instance 'fenced-code-block
+                                  :info-string info-string
+                                  :opening-fence-length fence-length
+                                  :tilde-fence tilde
+                                  :text (vector text)
+                                  :closed t
+                                  rest)))
                     (vector ,@children))))
 
 (def-suite block-parsing)
@@ -205,6 +213,91 @@ this isn't a heading
 a multi-line heading")
                   (paragraph "this isn't a heading")
                   (thematic-break))
+                document))))
+
+(test backtick-fenced-code-blocks
+  (let ((document
+         (parse-block-structure "```
+this is a simple code block
+```
+this is a paragraph
+ ``````info string goes here
+ this is another code block
+  it's indented!
+	of course tabs are treated as four spaces
+ ```
+ ~~~~~~
+still going...
+``````
+````another one!
+another one  
+
+  
+
+   ````
+```not a fenced code block`
+no")))
+    (is (print= (make-document
+                  (fenced-code-block nil 3 nil
+                                     "this is a simple code block
+")
+                  (paragraph "this is a paragraph")
+                  (fenced-code-block "info string goes here" 6 nil
+                                     "this is another code block
+ it's indented!
+   of course tabs are treated as four spaces
+```
+~~~~~~
+still going...
+"
+                                     :opening-fence-indentation 1)
+                  (fenced-code-block "another one!" 4 nil
+                                     "another one  
+
+  
+")
+                  (paragraph "```not a fenced code block`
+no"))
+                document))))
+
+(test tilde-fenced-code-blocks
+  (let ((document
+         (parse-block-structure "opening paragraph
+  ~~~info
+this is a tilde code block
+ fancy!
+  some indentation here too
+   pretty cool, huh?
+         ~~~~~~~~
+   ~~~~~~~~~~   	  
+another paragraph
+~~~~~    
+tildes:
+~~~
+`````````
+~~~~~
+~~~``
+hi
+~~~")))
+    (is (print= (make-document
+                  (paragraph "opening paragraph")
+                  (fenced-code-block "info" 3 t
+                                     "this is a tilde code block
+fancy!
+some indentation here too
+ pretty cool, huh?
+       ~~~~~~~~
+"
+                                     :opening-fence-indentation 2)
+                  (paragraph "another paragraph")
+                  (fenced-code-block nil 5 t
+                                     "tildes:
+~~~
+`````````
+")
+                  (fenced-code-block "``" 3 t
+                                     "hi
+"))
                 document))))
 
 ;;;; block-parse-test.lisp ends here
