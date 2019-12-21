@@ -57,8 +57,8 @@ This affects whether certain block structures can be recognized in a
 paragraph, such as a setext heading line."))
   (:documentation "Context for parsing a document."))
 
-(defun make-context (block-starts setext-underlines)
-  "Return a new CONTEXT using BLOCK-STARTS and SETEXT-UNDERLINES.
+(defun make-context (&key block-starts setext-underlines)
+  "Return a new CONTEXT using the provided components.
 BLOCK-STARTS and SETEXT-UNDERLINES are lists as described in the
 documentation of CONTEXT, but the keys will be converted to efficient
 scanners."
@@ -77,6 +77,7 @@ scanners."
 (defun make-standard-context ()
   "Return a new CONTEXT using the standard CommonMark block starts."
   (make-context
+   :block-starts
    `(
      ;; Thematic breaks
      ("^ {0,3}([*_-])(?:[ \\t]*\\1[ \\t]*){2,}$"
@@ -125,6 +126,7 @@ scanners."
          (make-instance 'paragraph
                         :text (vector text)))
       nil))
+   :setext-underlines
    '(("^ {0,3}[ \\t]*=+[ \\t]*" 1)
      ("^ {0,3}[ \\t]*-+[ \\t]*" 2))))
 
