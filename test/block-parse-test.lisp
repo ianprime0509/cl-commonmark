@@ -388,4 +388,27 @@ but is interrupted!
 </p>"))
                 document))))
 
+(test type-7-html-blocks
+  (let ((document
+         (parse-block-structure
+          "<open-tag>
+    contents of the block
+
+this is just a paragraph
+<cannot-interrupt>
+
+<empty-tag/>
+
+<not-a-complete-tag
+so this is a paragraph")))
+    (is (print= (make-document
+                  (html-block "<open-tag>
+    contents of the block")
+                  (paragraph "this is just a paragraph
+<cannot-interrupt>")
+                  (html-block "<empty-tag/>")
+                  (paragraph "<not-a-complete-tag
+so this is a paragraph"))
+                document))))
+
 ;;;; block-parse-test.lisp ends here

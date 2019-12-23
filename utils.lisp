@@ -64,6 +64,9 @@ file."
 
 ;;; Regex helpers
 
+(ppcre:define-parse-tree-synonym blank-line
+    (:sequence :start-anchor optional-whitespace :end-anchor))
+
 (ppcre:define-parse-tree-synonym single-whitespace
     (:char-class #\Space #\Tab))
 
@@ -122,10 +125,74 @@ file."
      :case-insensitive-p
      (:alternation "address" "article" "aside" "base" "basefont" "blockquote" "body" "caption" "center" "col" "colgroup" "dd" "details" "dialog" "dir" "div" "dl" "dt" "fieldset" "figcaption" "figure" "footer" "form" "frame" "frameset" "h1" "h2" "h3" "h4" "h5" "h6" "head" "header" "hr" "html" "iframe" "legend" "li" "link" "main" "menu" "menuitem" "nav" "noframes" "ol" "optgroup" "option" "p" "param" "section" "source" "summary" "table" "tbody" "td" "tfoot" "th" "thead" "title" "tr" "track" "ul")))
 
+;; HTML tags
+
+(ppcre:define-parse-tree-synonym open-tag
+    (:group
+     #\<
+     tag-name
+     (:greedy-repetition 0 nil attribute)
+     optional-whitespace
+     (:greedy-repetition 0 1 #\/)
+     #\>))
+
+(ppcre:define-parse-tree-synonym closing-tag
+    (:group "</" tag-name optional-whitespace #\>))
+
+(ppcre:define-parse-tree-synonym tag-name
+    (:group
+     (:char-class (:range #\A #\Z) (:range #\a #\z))
+     (:greedy-repetition 0 nil
+                         (:char-class (:range #\A #\Z)
+                                      (:range #\a #\z)
+                                      (:range #\0 #\9)
+                                      #\-))))
+
+(ppcre:define-parse-tree-synonym attribute
+    (:group
+     required-whitespace
+     attribute-name
+     (:greedy-repetition 0 1 (:group
+                              optional-whitespace
+                              #\=
+                              optional-whitespace
+                              attribute-value))))
+
+(ppcre:define-parse-tree-synonym attribute-name
+    (:group
+     (:char-class (:range #\A #\Z) (:range #\a #\z) #\_ #\:)
+     (:greedy-repetition 0 nil
+                         (:char-class (:range #\A #\Z)
+                                      (:range #\a #\z)
+                                      (:range #\0 #\9)
+                                      #\_ #\. #\: #\-))))
+
+(ppcre:define-parse-tree-synonym attribute-value
+    (:alternation unquoted-attribute-value
+                  single-quoted-attribute-value
+                  double-quoted-attribute-value))
+
+(ppcre:define-parse-tree-synonym unquoted-attribute-value
+    (:greedy-repetition 1 nil
+                        (:inverted-char-class #\Space #\Tab #\"
+                                              #\' #\= #\< #\> #\`)))
+
+(ppcre:define-parse-tree-synonym single-quoted-attribute-value
+    (:group
+     #\'
+     (:greedy-repetition 0 nil (:inverted-char-class #\'))
+     #\'))
+
+(ppcre:define-parse-tree-synonym double-quoted-attribute-value
+    (:group
+     #\"
+     (:greedy-repetition 0 nil (:inverted-char-class #\"))
+     #\"))
+
 ;;; Text manipulation
 
 (defparameter *blank-line-scanner*
-  (ppcre:create-scanner "^[ \\t]*$")
+  (ppcre:create-scanner 'blank-line)
   "A scanner matching blank lines.")
 
 (defparameter *whitespace-chars*

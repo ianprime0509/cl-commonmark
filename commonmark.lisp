@@ -186,9 +186,17 @@ scanners."
         '(:alternation single-whitespace #\> "/>" :end-anchor)
         '(:greedy-repetition 0 nil :everything))
        ,(lambda (context text)
-          (make-html-block text *blank-line-scanner* nil context))
+          (make-html-block text 'blank-line nil context))
        t)
-     ;; TODO: add type 7 HTML blocks
+     (,(line-register
+        (indentation 0 3)
+        '(:alternation open-tag closing-tag)
+        'optional-whitespace)
+       ,(lambda (context text)
+          (make-html-block text 'blank-line nil context))
+       ;; HTML blocks of type 7 cannot interrupt a paragraph, unlike
+       ;; all other types
+       nil)
      ;; Paragraphs
      (,(line-register
         '(:greedy-repetition 0 nil :everything)
