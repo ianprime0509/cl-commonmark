@@ -62,6 +62,66 @@ file."
                         (return))
               (t (write-char char line)))))))
 
+;;; Regex helpers
+
+(ppcre:define-parse-tree-synonym single-whitespace
+    (:char-class #\Space #\Tab))
+
+(ppcre:define-parse-tree-synonym optional-whitespace
+    (:greedy-repetition 0 nil single-whitespace))
+
+(ppcre:define-parse-tree-synonym required-whitespace
+    (:greedy-repetition 1 nil single-whitespace))
+
+(ppcre:define-parse-tree-synonym single-non-whitespace
+    (:inverted-char-class #\Space #\Tab))
+
+(ppcre:define-parse-tree-synonym tab-stop (:alternation
+                                           (:sequence
+                                            (:greedy-repetition 0 3 #\Space)
+                                            #\Tab)
+                                           (:greedy-repetition 4 4 #\Space)))
+
+(defun line (&rest parse-trees)
+  "Return a parse tree matching a full line containing PARSE-TREES."
+  `(:sequence :start-anchor ,@parse-trees :end-anchor))
+
+(defun line-register (&rest parse-trees)
+  "Like LINE, but establish a register for the contents of the line."
+  (line `(:register (:group ,@parse-trees))))
+
+(defun indentation (min &optional (max min))
+  "Return a parse tree matching between MIN and MAX (inclusive) spaces of indentation."
+  (assert (not (minusp min)) (min))
+  (assert (>= max min) (max))
+  (let ((required-tabs (floor (/ min 4)))
+        (required-spaces (rem min 4))
+        (optional-tabs (floor (/ (- max min) 4)))
+        (optional-spaces (rem (- max min) 4)))
+    `(:sequence
+      (:greedy-repetition ,required-tabs ,required-tabs tab-stop)
+      (:greedy-repetition ,required-spaces ,required-spaces #\Space)
+      (:greedy-repetition 0 ,optional-tabs tab-stop)
+      (:greedy-repetition 0 ,optional-spaces #\Space))))
+
+(defun setext-underline (char)
+  "Return a parse tree matching a setext underline consisting of CHAR."
+  (line
+    (indentation 0 3)
+    'optional-whitespace
+    `(:greedy-repetition 1 nil ,char)
+    'optional-whitespace))
+
+(ppcre:define-parse-tree-synonym type-1-html-block-tag
+    (:group
+     :case-insensitive-p
+     (:alternation "script" "pre" "style")))
+
+(ppcre:define-parse-tree-synonym type-6-html-block-tag
+    (:group
+     :case-insensitive-p
+     (:alternation "address" "article" "aside" "base" "basefont" "blockquote" "body" "caption" "center" "col" "colgroup" "dd" "details" "dialog" "dir" "div" "dl" "dt" "fieldset" "figcaption" "figure" "footer" "form" "frame" "frameset" "h1" "h2" "h3" "h4" "h5" "h6" "head" "header" "hr" "html" "iframe" "legend" "li" "link" "main" "menu" "menuitem" "nav" "noframes" "ol" "optgroup" "option" "p" "param" "section" "source" "summary" "table" "tbody" "td" "tfoot" "th" "thead" "title" "tr" "track" "ul")))
+
 ;;; Text manipulation
 
 (defparameter *blank-line-scanner*
@@ -160,7 +220,7 @@ were actually removed."
                        do (when spaces-remaining (decf spaces-remaining))
                          (incf spaces-stripped)
                        else if (eql (aref line i) #\Tab)
-                       do (let* ((next-stop (next-tab-stop spaces-stripped 4))
+                       do (let* ((next-stop (next-tab-stop spaces-stripped))
                                  (stop-diff (- next-stop spaces-stripped)))
                             (when spaces-remaining
                               (decf spaces-remaining stop-diff))
@@ -177,8 +237,8 @@ were actually removed."
                  do (write-char (aref line i) stripped))))))
     (values stripped spaces-stripped)))
 
-(defun next-tab-stop (position tab-width)
-  "Return the position of the next tab stop of width TAB-WIDTH starting at POSITION."
-  (* tab-width (floor (/ (+ position tab-width) tab-width))))
+(defun next-tab-stop (position)
+  "Return the position of the next tab stop (4 spaces wide) starting at POSITION."
+  (* 4 (floor (/ (+ position 4) 4))))
 
 ;;;; utils.lisp ends here

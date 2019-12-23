@@ -80,71 +80,126 @@ scanners."
    :block-starts
    `(
      ;; Thematic breaks
-     ("^ {0,3}([*_-])(?:[ \\t]*\\1[ \\t]*){2,}$"
-      ,(lambda (context break-string)
-         (declare (ignore break-string))
-         (make-thematic-break context))
-      t)
-     ;; ATX headings
-     ("^ {0,3}(#{1,6})[ \\t]+(.*?)(?:[ \\t]#*[ \\t]*)?$"
-      ,(lambda (context opening text)
-         (make-heading (length opening) (vector text) context))
-      t)
-     ;; Fenced code blocks
-     ("^( {0,3})(`{3,})[ \\t]*([^`]*[^ \\t`])?[ \\t]*$"
-      ,(lambda (context indent fence info-string)
-         (make-fenced-code-block info-string nil (length indent)
-                                 (length fence) nil context))
-      t)
-     ("^( {0,3})(~{3,})[ \\t]*(.*[^ \\t])?[ \\t]*$"
-      ,(lambda (context indent fence info-string)
-         (make-fenced-code-block info-string nil (length indent)
-                                 (length fence) t context))
-      t)
-     ;; Indented code blocks
-     ("^((?: {0,3}\\t| {4}).*[^ \\t].*)$"
-      ,(lambda (context text)
-         (make-indented-code-block text context))
-      nil)
-     ;; HTML blocks
-     (,(ppcre:create-scanner "^( {0,3}<(?:script|pre|style)(?:[ \\t>]|$).*)$"
-                             :case-insensitive-mode t)
-      ,(lambda (context text)
-         (make-html-block text
-                          (ppcre:create-scanner "</(?:script|pre|style)>"
-                                                :case-insensitive-mode t)
-                          t context))
+     (,(line
+         (indentation 0 3)
+         '(:register (:char-class #\* #\_ #\-))
+         'optional-spaces
+         '(:greedy-repetition 2 nil
+           (:sequence (:back-reference 1) optional-whitespace)))
+       ,(lambda (context break-string)
+          (declare (ignore break-string))
+          (make-thematic-break context))
        t)
-     ("^( {0,3}<!--.*)$"
-      ,(lambda (context text)
-         (make-html-block text "-->" t context))
-      t)
-     ("^( {0,3}<\\?.*)$"
-      ,(lambda (context text)
-         (make-html-block text "\\?>" t context))
-      t)
-     ("^( {0,3}<![A-Z].*)$"
-      ,(lambda (context text)
-         (make-html-block text ">" t context))
-      t)
-     ("^( {0,3}<!\\[CDATA\\[.*)$"
-      ,(lambda (context text)
-         (make-html-block text "\\]\\]>" t context))
-      t)
-     (,(ppcre:create-scanner "^( {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \\t>]|/>|$).*)$"
-                             :case-insensitive-mode t)
+     ;; ATX headings
+     (,(line
+         (indentation 0 3)
+         '(:register (:greedy-repetition 1 6 #\#))
+         'required-whitespace
+         '(:register (:non-greedy-repetition 0 nil :everything))
+         '(:greedy-repetition 0 1
+           (:sequence
+            required-whitespace
+            (:greedy-repetition 1 nil #\#)))
+         'optional-whitespace)
+       ,(lambda (context opening text)
+          (make-heading (length opening) (vector text) context))
+       t)
+     ;; Fenced code blocks
+     (,(line
+         `(:register ,(indentation 0 3))
+         '(:register (:greedy-repetition 3 nil #\`))
+         'optional-whitespace
+         '(:greedy-repetition 0 1
+           (:register
+            (:non-greedy-repetition 1 nil
+             (:inverted-char-class #\`))))
+         'optional-whitespace)
+       ,(lambda (context indent fence info-string)
+          (make-fenced-code-block info-string nil (length indent)
+                                  (length fence) nil context))
+       t)
+     (,(line
+         `(:register ,(indentation 0 3))
+         '(:register (:greedy-repetition 3 nil #\~))
+         'optional-whitespace
+         '(:greedy-repetition 0 1
+           (:register
+            (:non-greedy-repetition 1 nil :everything)))
+         'optional-whitespace)
+       ,(lambda (context indent fence info-string)
+          (make-fenced-code-block info-string nil (length indent)
+                                  (length fence) t context))
+       t)
+     ;; Indented code blocks
+     (,(line-register
+        (indentation 4)
+        '(:non-greedy-repetition 0 nil :everything)
+        'single-non-whitespace
+        '(:non-greedy-repetition 0 nil :everything))
        ,(lambda (context text)
-          (make-html-block text "^[ \\t]*$" nil context))
+          (make-indented-code-block text context))
+       nil)
+     ;; HTML blocks
+     (,(line-register
+        (indentation 0 3)
+        "<"
+        'type-1-html-block-tag
+        '(:alternation single-whitespace #\> :end-anchor)
+        '(:greedy-repetition 0 nil :everything))
+       ,(lambda (context text)
+          (make-html-block text '(:sequence "</" type-1-html-block-tag ">")
+                           t context))
+       t)
+     (,(line-register
+        (indentation 0 3)
+        "<!--"
+        '(:greedy-repetition 0 nil :everything))
+       ,(lambda (context text)
+          (make-html-block text "-->" t context))
+       t)
+     (,(line-register
+        (indentation 0 3)
+        "<?"
+        '(:greedy-repetition 0 nil :everything))
+       ,(lambda (context text)
+          (make-html-block text "\\?>" t context))
+       t)
+     (,(line-register
+        (indentation 0 3)
+        "<!"
+        '(:char-class (:range #\A #\Z))
+        '(:greedy-repetition 0 nil :everything))
+       ,(lambda (context text)
+          (make-html-block text ">" t context))
+       t)
+     (,(line-register
+        (indentation 0 3)
+        "<![CDATA["
+        '(:greedy-repetition 0 nil :everything))
+       ,(lambda (context text)
+          (make-html-block text "\\]\\]>" t context))
+       t)
+     (,(line-register
+        (indentation 0 3)
+        '(:alternation "<" "</")
+        'type-6-html-block-tag
+        '(:alternation single-whitespace #\> "/>" :end-anchor)
+        '(:greedy-repetition 0 nil :everything))
+       ,(lambda (context text)
+          (make-html-block text *blank-line-scanner* nil context))
        t)
      ;; TODO: add type 7 HTML blocks
      ;; Paragraphs
-     ("^([ \\t]*.*[^ \\t].*)$"
-      ,(lambda (context text)
-         (make-paragraph text context))
-      nil))
+     (,(line-register
+        '(:greedy-repetition 0 nil :everything)
+        'single-non-whitespace
+        '(:greedy-repetition 0 nil :everything))
+       ,(lambda (context text)
+          (make-paragraph text context))
+       nil))
    :setext-underlines
-   '(("^ {0,3}[ \\t]*=+[ \\t]*" 1)
-     ("^ {0,3}[ \\t]*-+[ \\t]*" 2))))
+   `((,(setext-underline #\=) 1)
+     (,(setext-underline #\-) 2))))
 
 (defun make-block (line context &optional in-paragraph)
   "Make a new block from LINE using CONTEXT.
