@@ -82,100 +82,65 @@ scanners."
      ;; Thematic breaks
      ("^ {0,3}([*_-])(?:[ \\t]*\\1[ \\t]*){2,}$"
       ,(lambda (context break-string)
-         (declare (ignore context break-string))
-         (make-instance 'thematic-break))
+         (declare (ignore break-string))
+         (make-thematic-break context))
       t)
      ;; ATX headings
      ("^ {0,3}(#{1,6})[ \\t]+(.*?)(?:[ \\t]#*[ \\t]*)?$"
       ,(lambda (context opening text)
-         (declare (ignore context))
-         (make-instance 'heading
-                        :level (length opening)
-                        :text (vector text)))
+         (make-heading (length opening) (vector text) context))
       t)
      ;; Fenced code blocks
      ("^( {0,3})(`{3,})[ \\t]*([^`]*[^ \\t`])?[ \\t]*$"
       ,(lambda (context indent fence info-string)
-         (declare (ignore context))
-         (make-instance 'fenced-code-block
-                        :info-string info-string
-                        :opening-fence-indentation (length indent)
-                        :opening-fence-length (length fence)
-                        :tilde-fence nil))
+         (make-fenced-code-block info-string nil (length indent)
+                                 (length fence) nil context))
       t)
      ("^( {0,3})(~{3,})[ \\t]*(.*[^ \\t])?[ \\t]*$"
       ,(lambda (context indent fence info-string)
-         (declare (ignore context))
-         (make-instance 'fenced-code-block
-                        :info-string info-string
-                        :opening-fence-indentation (length indent)
-                        :opening-fence-length (length fence)
-                        :tilde-fence t))
+         (make-fenced-code-block info-string nil (length indent)
+                                 (length fence) t context))
       t)
      ;; Indented code blocks
-     ("^(?: {0,3}\\t| {4})(.*[^ \\t].*)$"
+     ("^((?: {0,3}\\t| {4}).*[^ \\t].*)$"
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'indented-code-block
-                        :text (vector text)))
+         (make-indented-code-block text context))
       nil)
      ;; HTML blocks
-     (,(ppcre:create-scanner "(^ {0,3}<(?:script|pre|style)(?:[ \\t>]|$).*$)"
+     (,(ppcre:create-scanner "^( {0,3}<(?:script|pre|style)(?:[ \\t>]|$).*)$"
                              :case-insensitive-mode t)
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'html-block
-                        :text (vector text)
-                        :end-line-scanner
-                        (ppcre:create-scanner "</(?:script|pre|style)>")
-                        :include-end-line-p t))
+         (make-html-block text
+                          (ppcre:create-scanner "</(?:script|pre|style)>"
+                                                :case-insensitive-mode t)
+                          t context))
        t)
-     ("(^ {0,3}<!--.*$)"
+     ("^( {0,3}<!--.*)$"
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'html-block
-                        :text (vector text)
-                        :end-line-scanner (ppcre:create-scanner "-->")
-                        :include-end-line-p t))
+         (make-html-block text "-->" t context))
       t)
-     ("(^ {0,3}<\\?.*$)"
+     ("^( {0,3}<\\?.*)$"
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'html-block
-                        :text (vector text)
-                        :end-line-scanner (ppcre:create-scanner "\\?>")
-                        :include-end-line-p t))
+         (make-html-block text "\\?>" t context))
       t)
-     ("(^ {0,3}<![A-Z].*$)"
+     ("^( {0,3}<![A-Z].*)$"
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'html-block
-                        :text (vector text)
-                        :end-line-scanner (ppcre:create-scanner ">")
-                        :include-end-line-p t))
+         (make-html-block text ">" t context))
       t)
-     ("(^ {0,3}<!\\[CDATA\\[.*$)"
+     ("^( {0,3}<!\\[CDATA\\[.*)$"
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'html-block
-                        :text (vector text)
-                        :end-line-scanner (ppcre:create-scanner "\\]\\]>")
-                        :include-end-line-p t))
+         (make-html-block text "\\]\\]>" t context))
       t)
-     (,(ppcre:create-scanner "(^ {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \\t>]|/>|$).*$)"
+     (,(ppcre:create-scanner "^( {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \\t>]|/>|$).*)$"
                              :case-insensitive-mode t)
        ,(lambda (context text)
-          (declare (ignore context))
-          (make-instance 'html-block
-                         :text (vector text)))
+          (make-html-block text "^[ \\t]*$" nil context))
        t)
      ;; TODO: add type 7 HTML blocks
      ;; Paragraphs
-     ("^[ \\t]*(.*[^ \\t].*)$"
+     ("^([ \\t]*.*[^ \\t].*)$"
       ,(lambda (context text)
-         (declare (ignore context))
-         (make-instance 'paragraph
-                        :text (vector text)))
+         (make-paragraph text context))
       nil))
    :setext-underlines
    '(("^ {0,3}[ \\t]*=+[ \\t]*" 1)
@@ -267,37 +232,45 @@ directly."))
   (setf (slot-value block 'closed) t))
 
 (defclass atomic-block-node (block-node)
-  ()
+  ((closed
+    ;; Atomic blocks are always closed
+    :initform t))
   (:documentation "A block node that does not accept any additional contents after being created, such as a thematic break."))
-
-(defmethod initialize-instance :after ((block atomic-block-node) &key)
-  "Ensure atomic blocks are always closed."
-  (setf (slot-value block 'closed) t))
 
 (defmethod accept-line (line (block atomic-block-node) context)
   "A stub implementation of ACCEPT-LINE.
 This method will never be called because of the around method defined
-for BLOCK-NODE."
+for BLOCK-NODE; atomic blocks are always closed."
   (values nil nil))
 
 (defclass thematic-break (atomic-block-node)
   ()
   (:documentation "A thematic break (horizontal rule) separating parts of a document."))
 
+(defun make-thematic-break (context)
+  "Return a new thematic break."
+  (declare (ignore context))
+  (make-instance 'thematic-break))
+
 (defclass heading (atomic-block-node)
   ((level
     :initarg :level
     :initform (error "Must provide heading level")
     :type (integer 1 6)
-    :accessor level
+    :reader level
     :documentation "The level of the heading, between 1 and 6 (inclusive).")
    (text
     :initarg :text
     :initform (error "Must provide heading text")
     :type (vector (or string inline-node))
-    :accessor text
+    :reader text
     :documentation "The text of the heading."))
   (:documentation "A heading of any type (ATX or setext) containing inline content."))
+
+(defun make-heading (level text context)
+  "Return a new heading at level LEVEL with TEXT."
+  (declare (ignore context))
+  (make-instance 'heading :level level :text (make-text text)))
 
 (defmethod print-object ((block heading) stream)
   (print-unreadable-object (block stream :type t)
@@ -317,14 +290,10 @@ for BLOCK-NODE."
                           :adjustable t
                           :fill-pointer 0)
     :type (vector (or string inline-node))
-    :accessor text
-    :documentation "The text of the paragraph."))
+    :reader text
+    :documentation "The text of the paragraph.
+This vector must be adjustable."))
   (:documentation "A block containing inline content (including text)."))
-
-(defmethod initialize-object :after ((block text-block-node) &key)
-  "Ensure the block's text vector is adjustable."
-  (setf (text block)
-        (make-adjustable (text block) '(or string inline-node))))
 
 (defmethod print-object ((object text-block-node) stream)
   (print-unreadable-object (object stream :type t)
@@ -343,6 +312,15 @@ for BLOCK-NODE."
   ()
   (:documentation "A paragraph."))
 
+(defun make-paragraph (first-line context)
+  "Return a new paragraph with FIRST-LINE as its first line.
+This is equivalent to creating an empty paragraph and then calling
+ACCEPT-LINE with FIRST-LINE."
+  (let ((block (make-instance 'paragraph)))
+    (when first-line
+      (accept-line first-line block context))
+    block))
+
 (defmethod accept-line (line (block paragraph) context)
   (when (blankp line)
     (close-block block context)
@@ -356,9 +334,7 @@ for BLOCK-NODE."
       (when level
         (close-block block context)
         (return-from accept-line
-          (values :replace-self (make-instance 'heading
-                                               :text (text block)
-                                               :level level))))))
+          (values :replace-self (make-heading level (text block) context))))))
   ;; Check for blocks that can interrupt paragraphs
   (let ((interrupting-block (make-block line context t)))
     (when interrupting-block
@@ -384,6 +360,13 @@ for BLOCK-NODE."
 (defclass indented-code-block (code-block)
   ()
   (:documentation "An indented code block (block of code where each line is preceded by a tab or four spaces)."))
+
+(defun make-indented-code-block (first-line context)
+  "Return a new indented code block with FIRST-LINE as its first line."
+  (let ((block (make-instance 'indented-code-block)))
+    (when first-line
+      (accept-line first-line block context))
+    block))
 
 (defmethod accept-line (line (block indented-code-block) context)
   (multiple-value-bind (stripped-line indentation)
@@ -424,6 +407,18 @@ for BLOCK-NODE."
     :reader tilde-fence-p
     :documentation "Whether this block is fenced by tildes (if nil, backtick is the fence character)."))
   (:documentation "A fenced code block (block of code surrounded by backtick or tilde fences)."))
+
+(defun make-fenced-code-block (info-string first-line opening-fence-indentation
+                               opening-fence-length tilde-fence context)
+  "Return a new fenced code block with FIRST-LINE as its first line."
+  (let ((block (make-instance 'fenced-code-block
+                              :info-string info-string
+                              :opening-fence-indentation opening-fence-indentation
+                              :opening-fence-length opening-fence-length
+                              :tilde-fence tilde-fence)))
+    (when first-line
+      (accept-line first-line block context))
+    block))
 
 (defmethod print-object ((block fenced-code-block) stream)
   (with-accessors ((closed closedp) (text text) (info info-string)
@@ -478,19 +473,22 @@ for BLOCK-NODE."
     :documentation "Whether to include the ending line in this block's text."))
   (:documentation "A block of raw HTML."))
 
-(defmethod initialize-instance :after ((block html-block) &key)
-  "Ensure that BLOCK is closed if the first argument matches the end line condition."
-  ;; TODO: this is bad design; we should just get rid of manual uses
-  ;; of MAKE-INSTANCE and create MAKE-HTML-BLOCK, etc. that take care
-  ;; of any of this type of initialization logic
-  (when (and (not (emptyp (text block)))
-             (stringp (first-elt (text block)))
-             (ppcre:scan (end-line-scanner block) (first-elt (text block))))
-    (setf (slot-value block 'closed) t)))
+(defun make-html-block (first-line end-line-scanner include-end-line context)
+  "Return a new HTML block with FIRST-LINE as its first line."
+  (let ((block (make-instance 'html-block
+                              :end-line-scanner
+                              (ppcre:create-scanner end-line-scanner)
+                              :include-end-line-p include-end-line)))
+    (when first-line
+      (accept-line first-line block context))
+    block))
 
 (defmethod accept-line (line (block html-block) context)
   (when (ppcre:scan (end-line-scanner block) line)
-    (when (include-end-line-p block)
+    (when (or (emptyp (text block))
+              (and (stringp (first-elt (text block)))
+                   (emptyp (first-elt (text block))))
+              (include-end-line-p block))
       (call-next-method))
     (close-block block context)
     (return-from accept-line (values nil nil)))

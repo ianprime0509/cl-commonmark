@@ -22,19 +22,27 @@ The original value of each place will be saved and restored on exit."
               for original-value in original-value-symbols
               collect `(setf ,place ,original-value))))))
 
-(defun make-adjustable (vector
-                        &optional (element-type (array-element-type vector)))
-  "Ensure VECTOR is adjustable with a fill pointer and the given element type.
-Return VECTOR if it is already adjustable with a fill pointer or
-return a new vector with the same contents."
-  (if (and (adjustable-array-p vector)
-           (array-has-fill-pointer-p vector))
-      vector
-      (make-array (length vector)
-                  :element-type element-type
-                  :adjustable t
-                  :fill-pointer (length vector)
-                  :initial-contents vector)))
+;;; Object creation
+
+(defun make-text (text)
+  "Convert TEXT to the format expected by text nodes.
+If TEXT is a string, return an adjustable vector with TEXT as its only
+element. If TEXT is another type of vector, ensure it is
+adjustable (creating a copy if necessary)."
+  (etypecase text
+    (string (make-array 1
+                        :initial-contents text
+                        :element-type '(or string inline-node)
+                        :fill-pointer 1
+                        :adjustable t))
+    (vector (if (and (adjustable-array-p text)
+                     (array-has-fill-pointer-p text))
+                text
+                (make-array (length text)
+                            :initial-contents text
+                            :element-type '(or string inline-node)
+                            :fill-pointer (length text)
+                            :adjustable t)))))
 
 ;;; Input
 
