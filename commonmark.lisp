@@ -119,6 +119,57 @@ scanners."
          (make-instance 'indented-code-block
                         :text (vector text)))
       nil)
+     ;; HTML blocks
+     (,(ppcre:create-scanner "(^ {0,3}<(?:script|pre|style)(?:[ \\t>]|$).*$)"
+                             :case-insensitive-mode t)
+      ,(lambda (context text)
+         (declare (ignore context))
+         (make-instance 'html-block
+                        :text (vector text)
+                        :end-line-scanner
+                        (ppcre:create-scanner "</(?:script|pre|style)>")
+                        :include-end-line-p t))
+       t)
+     ("(^ {0,3}<!--.*$)"
+      ,(lambda (context text)
+         (declare (ignore context))
+         (make-instance 'html-block
+                        :text (vector text)
+                        :end-line-scanner (ppcre:create-scanner "-->")
+                        :include-end-line-p t))
+      t)
+     ("(^ {0,3}<\\?.*$)"
+      ,(lambda (context text)
+         (declare (ignore context))
+         (make-instance 'html-block
+                        :text (vector text)
+                        :end-line-scanner (ppcre:create-scanner "\\?>")
+                        :include-end-line-p t))
+      t)
+     ("(^ {0,3}<![A-Z].*$)"
+      ,(lambda (context text)
+         (declare (ignore context))
+         (make-instance 'html-block
+                        :text (vector text)
+                        :end-line-scanner (ppcre:create-scanner ">")
+                        :include-end-line-p t))
+      t)
+     ("(^ {0,3}<!\\[CDATA\\[.*$)"
+      ,(lambda (context text)
+         (declare (ignore context))
+         (make-instance 'html-block
+                        :text (vector text)
+                        :end-line-scanner (ppcre:create-scanner "\\]\\]>")
+                        :include-end-line-p t))
+      t)
+     (,(ppcre:create-scanner "(^ {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \\t>]|/>|$).*$)"
+                             :case-insensitive-mode t)
+       ,(lambda (context text)
+          (declare (ignore context))
+          (make-instance 'html-block
+                         :text (vector text)))
+       t)
+     ;; TODO: add type 7 HTML blocks
      ;; Paragraphs
      ("^[ \\t]*(.*[^ \\t].*)$"
       ,(lambda (context text)
@@ -412,6 +463,38 @@ for BLOCK-NODE."
     (delete-surrounding-empty-lines text)
     ;; Again, for some reason we need to add a newline
     (add-raw-text (string #\Newline) text)))
+
+(defclass html-block (text-block-node)
+  ((end-line-scanner
+    :initarg :end-line-scanner
+    :initform (ppcre:create-scanner "^[ \\t]*$")
+    :reader end-line-scanner
+    :documentation "A scanner matching the ending line of this block.")
+   (include-end-line
+    :initarg :include-end-line-p
+    :initform nil
+    :type boolean
+    :reader include-end-line-p
+    :documentation "Whether to include the ending line in this block's text."))
+  (:documentation "A block of raw HTML."))
+
+(defmethod initialize-instance :after ((block html-block) &key)
+  "Ensure that BLOCK is closed if the first argument matches the end line condition."
+  ;; TODO: this is bad design; we should just get rid of manual uses
+  ;; of MAKE-INSTANCE and create MAKE-HTML-BLOCK, etc. that take care
+  ;; of any of this type of initialization logic
+  (when (and (not (emptyp (text block)))
+             (stringp (first-elt (text block)))
+             (ppcre:scan (end-line-scanner block) (first-elt (text block))))
+    (setf (slot-value block 'closed) t)))
+
+(defmethod accept-line (line (block html-block) context)
+  (when (ppcre:scan (end-line-scanner block) line)
+    (when (include-end-line-p block)
+      (call-next-method))
+    (close-block block context)
+    (return-from accept-line (values nil nil)))
+  (call-next-method))
 
 (defclass container-block-node (block-node)
   ((children

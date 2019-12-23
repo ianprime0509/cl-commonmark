@@ -31,6 +31,7 @@
 
    :indented-code-block
    :fenced-code-block
+   :html-block
 
    :container-block-node
    :children

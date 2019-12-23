@@ -33,7 +33,10 @@
                                   :tilde-fence tilde
                                   :text (vector text)
                                   :closed t
-                                  rest)))
+                                  rest))
+                         (html-block (text &rest rest)
+                           (apply #'make-instance 'html-block
+                                  :closed t :text (vector text) rest)))
                     (vector ,@children))))
 
 (def-suite block-parsing)
@@ -298,6 +301,91 @@ some indentation here too
                   (fenced-code-block "``" 3 t
                                      "hi
 "))
+                document))))
+
+(test type-1-html-blocks
+  (let ((document
+         (parse-block-structure "<script>
+script contents
+
+more script contents
+</script>
+
+    <pre>this is a code block</pre>
+
+  <pre>leading indentation
+    is fine
+
+  </script>the end tag doesn't even have to be the same
+here's a paragraph
+<pre>starting and ending on same line</pre>
+<style>
+body { color: red; }")))
+    (is (print= (make-document
+                  (html-block "<script>
+script contents
+
+more script contents
+</script>")
+                  (indented-code-block "<pre>this is a code block</pre>
+")
+                  (html-block "  <pre>leading indentation
+    is fine
+
+  </script>the end tag doesn't even have to be the same")
+                  (paragraph "here's a paragraph")
+                  (html-block "<pre>starting and ending on same line</pre>")
+                  (html-block "<style>
+body { color: red; }"))
+                document))))
+
+(test types-2-through-5-html-blocks
+  (let ((document
+         (parse-block-structure "<!-- HTML comment -->
+<!-- Longer
+HTML comment -->
+
+<? HTML block
+continues here ?>
+
+<!DOCTYPE html>
+
+<![CDATA[This is some cdata
+text.]]>")))
+    (is (print= (make-document
+                  (html-block "<!-- HTML comment -->")
+                  (html-block "<!-- Longer
+HTML comment -->")
+                  (html-block "<? HTML block
+continues here ?>")
+                  (html-block "<!DOCTYPE html>")
+                  (html-block "<![CDATA[This is some cdata
+text.]]>"))
+                document))))
+
+(test type-6-html-blocks
+  (let ((document
+         (parse-block-structure "<address invalid!!invalid
+element contents
+
+<div/>
+still part of the block
+
+
+
+paragraph starts here
+<p>
+but is interrupted!
+</p>")))
+    (is (print= (make-document
+                  (html-block "<address invalid!!invalid
+element contents")
+                  (html-block "<div/>
+still part of the block")
+                  (paragraph "paragraph starts here")
+                  (html-block "<p>
+but is interrupted!
+</p>"))
                 document))))
 
 ;;;; block-parse-test.lisp ends here
