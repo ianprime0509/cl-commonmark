@@ -13,30 +13,36 @@
   `(make-instance 'document
                   :closed t
                   :children
-                  (flet ((paragraph (text &rest rest)
-                           (apply #'make-instance 'paragraph
-                                  :closed t :text (vector text) rest))
-                         (indented-code-block (text &rest rest)
-                           (apply #'make-instance 'indented-code-block
-                                  :closed t :text (vector text) rest))
-                         (thematic-break (&rest rest)
-                           (apply #'make-instance 'thematic-break
-                                  :closed t rest))
-                         (heading (level text &rest rest)
-                           (apply #'make-instance 'heading
-                                  :level level :text (vector text) rest))
+                  (flet ((paragraph (text)
+                           (make-instance 'paragraph
+                                          :closed t :text (vector text)))
+                         (indented-code-block (text)
+                           (make-instance 'indented-code-block
+                                          :closed t :text (vector text)))
+                         (thematic-break ()
+                           (make-instance 'thematic-break :closed t))
+                         (heading (level text)
+                           (make-instance 'heading
+                                          :level level :text (vector text)))
                          (fenced-code-block (info-string fence-length tilde
-                                                         text &rest rest)
-                           (apply #'make-instance 'fenced-code-block
-                                  :info-string info-string
-                                  :opening-fence-length fence-length
-                                  :tilde-fence tilde
-                                  :text (vector text)
-                                  :closed t
-                                  rest))
-                         (html-block (text &rest rest)
-                           (apply #'make-instance 'html-block
-                                  :closed t :text (vector text) rest)))
+                                                         text
+                                                         &key (indent 0))
+                           (make-instance 'fenced-code-block
+                                          :info-string info-string
+                                          :opening-fence-length fence-length
+                                          :tilde-fence tilde
+                                          :text (vector text)
+                                          :closed t
+                                          :opening-fence-indentation indent))
+                         (html-block (text)
+                           (make-instance 'html-block
+                                          :closed t :text (vector text)))
+                         (block-quote (&rest children)
+                           (make-instance 'block-quote
+                                          :children
+                                          (make-array (length children)
+                                                      :initial-contents children)
+                                          :closed t)))
                     (vector ,@children))))
 
 (def-suite block-parsing)
@@ -253,7 +259,7 @@ no")))
 ~~~~~~
 still going...
 "
-                                     :opening-fence-indentation 1)
+                                     :indent 1)
                   (fenced-code-block "another one!" 4 nil
                                      "another one  
 
@@ -291,7 +297,7 @@ some indentation here too
  pretty cool, huh?
        ~~~~~~~~
 "
-                                     :opening-fence-indentation 2)
+                                     :indent 2)
                   (paragraph "another paragraph")
                   (fenced-code-block nil 5 t
                                      "tildes:
@@ -409,6 +415,35 @@ so this is a paragraph")))
                   (html-block "<empty-tag/>")
                   (paragraph "<not-a-complete-tag
 so this is a paragraph"))
+                document))))
+
+(test block-quotes
+  (let ((document
+         (parse-block-structure
+          "> this is a block quote
+>>> these are some nested block quotes
+> > > spaces are fine too
+> this is a lazy continuation line
+
+> another block quote
+lazy
+
+this is a paragraph
+>this is a block quote")))
+    (is (print= (make-document
+                  (block-quote
+                   (paragraph "this is a block quote")
+                   (block-quote
+                    (block-quote
+                     (paragraph "these are some nested block quotes
+spaces are fine too
+this is a lazy continuation line"))))
+                  (block-quote
+                   (paragraph "another block quote
+lazy"))
+                  (paragraph "this is a paragraph")
+                  (block-quote
+                   (paragraph "this is a block quote")))
                 document))))
 
 ;;;; block-parse-test.lisp ends here

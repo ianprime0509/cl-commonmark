@@ -197,6 +197,14 @@ scanners."
        ;; HTML blocks of type 7 cannot interrupt a paragraph, unlike
        ;; all other types
        nil)
+     ;; Block quotes
+     (,(line-register
+        (indentation 0 3)
+        #\>
+        '(:greedy-repetition 0 nil :everything))
+       ,(lambda (context text)
+          (make-block-quote text context))
+       t)
      ;; Paragraphs
      (,(line-register
         '(:greedy-repetition 0 nil :everything)
@@ -240,6 +248,11 @@ parent of this block to perform some action with OBJECT. Valid actions
 are as follopws:
 
 nil - do nothing with OBJECT.
+
+:CONTINUE - the same as nil, but indicates that a lazy continuation
+line was accepted by a paragraph somewhere and thus that container
+blocks should remain open even if their opening conditions were not
+met.
 
 :ACCEPT - accept OBJECT as a new child node, if possible.
 
@@ -393,18 +406,18 @@ ACCEPT-LINE with FIRST-LINE."
   ;; paragraph
   (unless (or (lazy-continuation-p context)
               (zerop (length (text block))))
-    (let ((level (parse-setext-underline line context)))
-      (when level
-        (close-block block context)
-        (return-from accept-line
-          (values :replace-self (make-heading level (text block) context))))))
+    (when-let ((level (parse-setext-underline line context)))
+      (close-block block context)
+      (return-from accept-line
+        (values :replace-self (make-heading level (text block) context)))))
   ;; Check for blocks that can interrupt paragraphs
   (let ((interrupting-block (make-block line context t)))
     (when interrupting-block
       (close-block block context)
       (return-from accept-line (values :accept interrupting-block))))
   ;; Otherwise, we have an ordinary text line
-  (call-next-method (strip-indentation line) block context))
+  (call-next-method (strip-indentation line) block context)
+  (values :continue nil))
 
 (defmethod close-block :after ((block paragraph) context)
   "Strip whitespace surrounding paragraph text."
@@ -560,20 +573,14 @@ ACCEPT-LINE with FIRST-LINE."
 (defclass container-block-node (block-node)
   ((children
     :initarg :children
-    :initform #()
+    :initform (make-array 0
+                          :element-type 'block-node
+                          :fill-pointer 0
+                          :adjustable t)
     :type (vector block-node)
     :accessor children
     :documentation "The children of the block."))
   (:documentation "A block node that can contain other blocks as children."))
-
-(defmethod initialize-instance :after ((node container-block-node) &key)
-  "Ensure the container's children array is adjustable."
-  (with-slots (children) node
-    (setf children (make-array (length children)
-                               :element-type 'block-node
-                               :adjustable t
-                               :fill-pointer (length children)
-                               :initial-contents children))))
 
 (defmethod print-object ((object container-block-node) stream)
   (print-unreadable-object (object stream :type t)
@@ -584,23 +591,64 @@ ACCEPT-LINE with FIRST-LINE."
   "Ask the last child of BLOCK to accept LINE or create a new child from LINE if there are none."
   (with-accessors ((children children)) block
     (if (emptyp children)
-        (let ((new-block (make-block line context)))
-          (when new-block
-            (vector-push-extend new-block children)))
+        (when-let ((new-block (make-block line context)))
+          (vector-push-extend new-block children)
+          (values nil nil))
         (multiple-value-bind (action object)
             (accept-line line (last-elt children) context)
           (ecase action
-            (:accept (vector-push-extend object children))
-            (:replace-self (setf (last-elt children) object))
-            (:delete-self (vector-pop children))
-            ((nil))))))
-  (values nil nil))
+            ((nil)
+             (when (lazy-continuation-p context)
+               ;; If we're looking for a lazy continuation line here,
+               ;; that means the opening condition for this block was
+               ;; not satisfied
+               (close-block block context))
+             (values nil nil))
+            (:continue
+             (values :continue nil))
+            (:accept
+             (vector-push-extend object children)
+             (values nil nil))
+            (:replace-self
+             (setf (last-elt children) object)
+             (values nil nil))
+            (:delete-self
+             (vector-pop children)
+             (values nil nil)))))))
 
 (defmethod close-block :after ((block container-block-node) context)
   "Close all unclosed children of BLOCK."
   (loop for child across (children block)
      unless (closedp child)
      do (close-block child context)))
+
+(defclass block-quote (container-block-node)
+  ()
+  (:documentation "A quoted block of Markdown contents."))
+
+(defun make-block-quote (first-line context)
+  "Return a new block quote with FIRST-LINE as its first line."
+  (let ((block (make-instance 'block-quote)))
+    (when first-line
+      (accept-line first-line block context))
+    block))
+
+(defparameter *block-quote-scanner*
+  (ppcre:create-scanner (line
+                          (indentation 0 3)
+                          #\>
+                          '(:greedy-repetition 0 1 #\Space)
+                          '(:register
+                            (:group
+                             (:greedy-repetition 0 nil :everything))))))
+
+(defmethod accept-line (line (block block-quote) context)
+  (multiple-value-bind (match registers)
+      (ppcre:scan-to-strings *block-quote-scanner* line)
+    (let ((line (if match (aref registers 0) line)))
+      (letf (((lazy-continuation-p context) (or (lazy-continuation-p context)
+                                                (not match))))
+        (call-next-method line block context)))))
 
 (defclass document (container-block-node)
   ()

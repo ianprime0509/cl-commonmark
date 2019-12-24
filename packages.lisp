@@ -6,7 +6,7 @@
 
 (defpackage :commonmark
   (:use :cl)
-  (:import-from :alexandria :emptyp :first-elt :last-elt)
+  (:import-from :alexandria :emptyp :first-elt :last-elt :when-let)
   (:export
 
    :context
@@ -36,6 +36,7 @@
    :container-block-node
    :children
 
+   :block-quote
    :document
 
    :accept-line
