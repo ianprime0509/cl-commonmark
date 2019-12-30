@@ -429,7 +429,13 @@ so this is a paragraph"))
 lazy
 
 this is a paragraph
->this is a block quote")))
+>this is a block quote
+
+> > > nested block quotes
+> ```
+> this is a code block
+```
+this is a separate code block")))
     (is (print= (make-document
                   (block-quote
                    (paragraph "this is a block quote")
@@ -443,7 +449,15 @@ this is a lazy continuation line"))))
 lazy"))
                   (paragraph "this is a paragraph")
                   (block-quote
-                   (paragraph "this is a block quote")))
+                   (paragraph "this is a block quote"))
+                  (block-quote
+                   (block-quote
+                    (block-quote
+                     (paragraph "nested block quotes")))
+                   (fenced-code-block nil 3 nil "this is a code block
+"))
+                  (fenced-code-block nil 3 nil "this is a separate code block
+"))
                 document))))
 
 ;;;; block-parse-test.lisp ends here

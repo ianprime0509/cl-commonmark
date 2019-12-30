@@ -236,7 +236,12 @@ empty)."
             (ppcre:scan-to-strings scanner line)
           (when match
             (let ((reg-list (map 'list #'identity registers)))
-              (return (apply function context reg-list)))))))
+              ;; TODO: this is an ugly hack; the lazy continuation
+              ;; state never should have been part of the context to
+              ;; begin with (it should be an optional argument to
+              ;; ACCEPT-LINE)
+              (letf (((lazy-continuation-p context) nil))
+                (return (apply function context reg-list))))))))
 
 (defun parse-setext-underline (line context)
   "Attempt to parse LINE as a setext heading underline using CONTEXT.
@@ -290,7 +295,13 @@ definitions) when closing themselves."))
 ;;; Block nodes
 
 (defclass block-node (node)
-  ((closed
+  ((can-accept-continuation
+    :initform nil
+    :type boolean
+    :reader can-accept-continuation-p
+    :allocation :class
+    :documentation "Whether this node can accept lazy continuation lines.")
+   (closed
     :initarg :closed
     :initform nil
     :type boolean
@@ -305,10 +316,15 @@ directly."))
     (format stream ":CLOSED ~s" (closedp block))))
 
 (defmethod accept-line :around (line (block block-node) context)
-  "Prevent BLOCK from accepting new lines if it is closed."
-  (if (not (closedp block))
-      (call-next-method)
-      (handle-new-block line context)))
+  "Handle a new line for a closed block or a block that cannot handle lazy continuation lines."
+  ;; If LINE is a lazy continuation line and BLOCK cannot handle such
+  ;; lines, BLOCK should be closed
+  (when (and (lazy-continuation-p context)
+             (not (can-accept-continuation-p block)))
+    (close-block block context))
+  (if (closedp block)
+      (handle-new-block line context)
+      (call-next-method)))
 
 (defmethod close-block ((block block-node) context)
   (declare (ignore context))
@@ -392,7 +408,8 @@ This vector must be adjustable."))
   (values nil nil))
 
 (defclass paragraph (text-block-node)
-  ()
+  ((can-accept-continuation
+    :initform t))
   (:documentation "A paragraph."))
 
 (defun make-paragraph (first-line context)
@@ -578,7 +595,9 @@ ACCEPT-LINE with FIRST-LINE."
   (call-next-method))
 
 (defclass container-block-node (block-node)
-  ((children
+  ((can-accept-continuation
+    :initform t)
+   (children
     :initarg :children
     :initform (make-array 0
                           :element-type 'block-node
@@ -614,8 +633,13 @@ ACCEPT-LINE with FIRST-LINE."
             (:continue
              (values :continue nil))
             (:accept
-             (vector-push-extend object children)
-             (values nil nil))
+             (if (lazy-continuation-p context)
+                 (progn
+                   (close-block block context)
+                   (values :accept object))
+                 (progn
+                   (vector-push-extend object children)
+                   (values nil nil))))
             (:replace-self
              (setf (last-elt children) object)
              (values nil nil))
@@ -656,6 +680,53 @@ ACCEPT-LINE with FIRST-LINE."
       (letf (((lazy-continuation-p context) (or (lazy-continuation-p context)
                                                 (not match))))
         (call-next-method line block context)))))
+
+(defclass list-item (container-block-node)
+  ((continuation-indent
+    :initarg :continuation-indent
+    :initform (error "Must provide continuation indent")
+    :type (integer 0)
+    :reader continuation-indent
+    :documentation "The number of spaces of indentation required for each following line (not the first) of the list item.")
+   (loose
+    :initarg :loose
+    :initform t
+    :type boolean
+    :accessor loose
+    :documentation "Whether this list item is considered 'loose' (directly contains block elements separated by blank lines).
+The spec has no notion of list items being 'loose' or 'tight', only
+lists themselves. We use this information only to aid in deciding
+whether a list is loose or tight."))
+  (:documentation "A list item.
+This is a superclass of ordered and unordered list items and should
+not be used directly."))
+
+(defclass unordered-list-item (list-item)
+  ((list-marker
+    :initarg :list-marker
+    :initform (error "Must provide list marker")
+    :type string
+    :reader list-marker
+    :documentation "The list marker (e.g. * or -)."))
+  (:documentation "An unordered list item."))
+
+(defclass ordered-list-item (list-item)
+  ((item-number
+    :initarg :item-number
+    :initform (error "Must provide item number")
+    :type (integer 0)
+    :reader item-number
+    :documentation "The number of this item in the list, as specified in the source document.
+When an ordered list is rendered to HTML, according to the spec, all
+item numbers except the first are ignored. However, they are retained
+in the AST.")
+   (marker-suffix
+    :initarg :marker-suffix
+    :initform (error "Must provide list marker suffix")
+    :type string
+    :reader marker-suffix
+    :documentation "The suffix following the list item number (e.g. . or ))."))
+  (:documentation "An ordered list item."))
 
 (defclass document (container-block-node)
   ()
