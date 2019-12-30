@@ -10,12 +10,18 @@
   :depends-on ("alexandria" "cl-ppcre" "uiop")
   :components ((:file "packages")
                (:file "utils" :depends-on ("packages"))
-               (:file "commonmark" :depends-on ("packages" "utils"))))
+               (:file "commonmark" :depends-on ("packages" "utils")))
+  :in-order-to ((test-op (test-op "commonmark/tests"))))
 
-(defsystem "commonmark/test"
+(defsystem "commonmark/tests"
   :depends-on ("commonmark" "fiveam")
-  :pathname "test"
+  :pathname "tests"
   :components ((:file "packages")
-               (:file "block-parse-test" :depends-on ("packages"))))
+               (:file "block-parse-test" :depends-on ("packages")))
+  :perform (test-op (o c)
+                    (unless (symbol-call :fiveam :run!
+                                         (find-symbol* :commonmark
+                                                       :commonmark-tests))
+                      (error "Test suite failed"))))
 
 ;;;; commonmark.asd ends here

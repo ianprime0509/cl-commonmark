@@ -2,7 +2,7 @@
 
 ;;;; Code:
 
-(in-package :commonmark-test)
+(in-package :commonmark-tests)
 
 (defun print= (s1 s2)
   "Return non-nil if S1 and S2 have the same printed representation."
@@ -45,7 +45,9 @@
                                           :closed t)))
                     (vector ,@children))))
 
-(def-suite block-parsing)
+(def-suite block-parsing
+    :description "Tests for parsing block structure"
+    :in commonmark)
 
 (in-suite block-parsing)
 
