@@ -6,7 +6,8 @@
 
 (defpackage :commonmark
   (:use :cl)
-  (:import-from :alexandria :emptyp :first-elt :last-elt :when-let)
+  (:import-from :alexandria :destructuring-case :emptyp :first-elt
+                :last-elt :when-let)
   (:export
 
    :context

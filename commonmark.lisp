@@ -216,19 +216,23 @@ scanners."
    `((,(setext-underline #\=) 1)
      (,(setext-underline #\-) 2))))
 
-(defun make-block (line context &optional in-paragraph)
+(defun make-block (line context)
   "Make a new block from LINE using CONTEXT.
 If LINE represents several nested blocks (for example, a paragraph
 within a block quote), return the top-level block containing the
 children. Return nil if no block can be created (e.g. if LINE is
 empty)."
-  (loop for (scanner function can-interrupt) in (block-starts context)
-     when (or (not in-paragraph) can-interrupt)
+  (loop for (scanner function nil) in (block-starts context)
      do (multiple-value-bind (match registers)
             (ppcre:scan-to-strings scanner line)
           (when match
             (let ((reg-list (map 'list #'identity registers)))
               (return (apply function context reg-list)))))))
+
+(defun paragraph-interruption-p (line context)
+  "Return non-nil if LINE can interrupt a paragraph."
+  (loop for (scanner nil can-interrupt) in (block-starts context)
+     thereis (and can-interrupt (ppcre:scan scanner line))))
 
 (defun parse-setext-underline (line context)
   "Attempt to parse LINE as a setext heading underline using CONTEXT.
@@ -242,33 +246,14 @@ is not a setext heading underline."
 
 (defgeneric accept-line (line block context &optional continuation-p)
   (:documentation "Ask BLOCK to accept LINE as additional contents.
-Return two values, ACTION and OBJECT. ACTION is a request for the
-parent of this block to perform some action with OBJECT. Valid actions
-are as follows:
-
-nil - do nothing with OBJECT.
-
-:CONTINUE - the same as nil, but indicates that a lazy continuation
-line was accepted by a paragraph somewhere and thus that container
-blocks should remain open even if their opening conditions were not
-met.
-
-:ACCEPT - accept OBJECT as a new child node, if possible.
-
-:REPLACE-SELF - replace this block with OBJECT.
-
-:DELETE-SELF - do nothing with OBJECT and delete this block.
-
 If CONTINUATION-P is non-nil, process LINE as a lazy continuation
-line."))
+line.
 
-(defun handle-new-block (line context)
-  "Return the values expected for ACCEPT-LINE given that LINE needs to be made into a new block.
-In other words, return (VALUES :ACCEPT (MAKE-BLOCK LINE
-CONTEXT)) if MAKE-BLOCK returns non-nil or (VALUES NIL NIL) otherwise.
-This is a helper function for ACCEPT-LINE implementations."
-  (let ((new-block (make-block line context)))
-    (values (when new-block :accept) new-block)))
+Return two values, ACCEPTED-P and ACTIONS. If ACCEPTED-P is non-nil,
+LINE was accepted by BLOCK. ACTIONS is a list of post-processing
+actions for the parent to take. Valid actions are as follows:
+
+(:REPLACE NEW-BLOCK) - replace BLOCK with NEW-BLOCK"))
 
 (defgeneric close-block (block context)
   (:documentation "Close BLOCK, indicating that it can no longer accept additional contents.
@@ -312,9 +297,8 @@ directly."))
   ;; lines, BLOCK should be closed
   (when (and continuation-p (not (can-accept-continuation-p block)))
     (close-block block context))
-  (if (closedp block)
-      (handle-new-block line context)
-      (call-next-method)))
+  (unless (closedp block)
+    (call-next-method line block context continuation-p)))
 
 (defmethod close-block ((block block-node) context)
   (declare (ignore context))
@@ -399,7 +383,7 @@ This vector must be adjustable."))
                                (unless (emptyp text) (string #\Newline))
                                line)
                   text))
-  (values nil nil))
+  t)
 
 (defclass paragraph (text-block-node)
   ((can-accept-continuation-p
@@ -419,7 +403,7 @@ ACCEPT-LINE with FIRST-LINE."
                         &optional continuation-p)
   (when (blankp line)
     (close-block block context)
-    (return-from accept-line (values nil nil)))
+    (return-from accept-line nil))
   ;; Check for setext heading underlines if we're not processing a
   ;; lazy continuation line and if we already have some content in the
   ;; paragraph
@@ -427,15 +411,13 @@ ACCEPT-LINE with FIRST-LINE."
     (when-let ((level (parse-setext-underline line context)))
       (close-block block context)
       (return-from accept-line
-        (values :replace-self (make-heading level (text block) context)))))
-  ;; Check for blocks that can interrupt paragraphs
-  (let ((interrupting-block (make-block line context t)))
-    (when interrupting-block
-      (close-block block context)
-      (return-from accept-line (values :accept interrupting-block))))
+        (values t `((:replace ,(make-heading level (text block) context)))))))
+  ;; Check for paragraph interruptions
+  (when (paragraph-interruption-p line context)
+    (close-block block context)
+    (return-from accept-line nil))
   ;; Otherwise, we have an ordinary text line
-  (call-next-method (strip-indentation line) block context)
-  (values :continue nil))
+  (call-next-method (strip-indentation line) block context continuation-p))
 
 (defmethod close-block :after ((block paragraph) context)
   "Strip whitespace surrounding paragraph text."
@@ -464,14 +446,11 @@ ACCEPT-LINE with FIRST-LINE."
 
 (defmethod accept-line (line (block indented-code-block) context
                         &optional continuation-p)
-  (declare (ignore continuation-p))
   (multiple-value-bind (stripped-line indentation)
       (strip-indentation line 4)
     (if (or (>= indentation 4) (blankp line))
-        (call-next-method stripped-line block context)
-        (progn
-          (close-block block context)
-          (handle-new-block line context)))))
+        (call-next-method stripped-line block context continuation-p)
+        (prog1 nil (close-block block context)))))
 
 (defmethod close-block :after ((block indented-code-block) context)
   "Remove leading and trailing blank lines from BLOCK."
@@ -537,7 +516,6 @@ ACCEPT-LINE with FIRST-LINE."
 
 (defmethod accept-line (line (block fenced-code-block) context
                         &optional continuation-p)
-  (declare (ignore continuation-p))
   (let ((closing-scanner (if (tilde-fence-p block)
                              *tilde-closing-fence-pattern*
                              *backtick-closing-fence-pattern*)))
@@ -545,9 +523,9 @@ ACCEPT-LINE with FIRST-LINE."
       ;; See if we have a closing fence
       (when (>= (length fence) (opening-fence-length block))
         (close-block block context)
-        (return-from accept-line (values nil nil)))))
+        (return-from accept-line t))))
   (call-next-method (strip-indentation line (opening-fence-indentation block))
-                    block context))
+                    block context continuation-p))
 
 (defmethod close-block :after ((block fenced-code-block) context)
   "Remove leading and trailing empty lines from BLOCK."
@@ -583,16 +561,15 @@ ACCEPT-LINE with FIRST-LINE."
 
 (defmethod accept-line (line (block html-block) context
                         &optional continuation-p)
-  (declare (ignore continuation-p))
   (when (ppcre:scan (end-line-scanner block) line)
     (when (or (emptyp (text block))
               (and (stringp (first-elt (text block)))
                    (emptyp (first-elt (text block))))
               (include-end-line-p block))
-      (call-next-method))
+      (call-next-method line block context continuation-p))
     (close-block block context)
-    (return-from accept-line (values nil nil)))
-  (call-next-method))
+    (return-from accept-line (include-end-line-p block)))
+  (call-next-method line block context continuation-p))
 
 (defclass container-block-node (block-node)
   ((can-accept-continuation-p
@@ -620,33 +597,26 @@ ACCEPT-LINE with FIRST-LINE."
     (if (emptyp children)
         (when-let ((new-block (make-block line context)))
           (vector-push-extend new-block children)
-          (values nil nil))
-        (multiple-value-bind (action object)
+          t)
+        (multiple-value-bind (accepted-p actions)
             (accept-line line (last-elt children) context continuation-p)
-          (ecase action
-            ((nil)
-             (when continuation-p
-               ;; If we're looking for a lazy continuation line here,
-               ;; that means the opening condition for this block was
-               ;; not satisfied
-               (close-block block context))
-             (values nil nil))
-            (:continue
-             (values :continue nil))
-            (:accept
-             (if continuation-p
-                 (progn
-                   (close-block block context)
-                   (values :accept object))
-                 (progn
-                   (vector-push-extend object children)
-                   (values nil nil))))
-            (:replace-self
-             (setf (last-elt children) object)
-             (values nil nil))
-            (:delete-self
-             (vector-pop children)
-             (values nil nil)))))))
+          ;; Regardless of whether the line was accepted, we need to
+          ;; perform any post-processing actions on the child
+          (loop for action in actions
+             do (destructuring-case action
+                  ((:replace new-block)
+                   (setf (last-elt children) new-block))))
+          (if accepted-p
+              t
+              ;; If the line was not accepted by the child, we either
+              ;; need to create a new child (if this block can remain
+              ;; open) or close this block and tell the parent to
+              ;; re-parse (if we're looking for a continuation line)
+              (if continuation-p
+                  (prog1 nil (close-block block context))
+                  (when-let ((new-block (make-block line context)))
+                    (vector-push-extend new-block children)
+                    t)))))))
 
 (defmethod close-block :after ((block container-block-node) context)
   "Close all unclosed children of BLOCK."
@@ -678,9 +648,9 @@ ACCEPT-LINE with FIRST-LINE."
                         &optional continuation-p)
   (multiple-value-bind (match registers)
       (ppcre:scan-to-strings *block-quote-scanner* line)
-    (let ((line (if match (aref registers 0) line)))
-      (let ((continuation-p (or continuation-p (not match))))
-        (call-next-method line block context continuation-p)))))
+    (let ((line (if match (aref registers 0) line))
+          (continuation-p (or continuation-p (not match))))
+      (call-next-method line block context continuation-p))))
 
 (defclass list-item (container-block-node)
   ((continuation-indent
@@ -732,6 +702,14 @@ in the AST.")
 (defclass document (container-block-node)
   ()
   (:documentation "The top-level node in the document AST."))
+
+(defmethod accept-line (line (block document) context
+                        &optional continuation-p)
+  "Accept LINE unconditionally.
+This just ensures that ACCEPT-LINE always returns t for (unclosed)
+documents."
+  (call-next-method line block context continuation-p)
+  t)
 
 ;;; Inline nodes
 
