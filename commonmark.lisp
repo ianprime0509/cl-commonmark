@@ -1,5 +1,12 @@
 ;;;; commonmark.lisp --- core definitions
 
+;;;; TODO
+
+;;; - Tab stops are not handled correctly: for example, a block quote
+;;;   marker (>) followed by a tab is currently interpreted as an
+;;;   indented code block within a block quote, since the column
+;;;   position after the marker is not considered.
+
 ;;;; Code:
 
 (in-package :commonmark)
@@ -83,7 +90,7 @@ scanners."
      (,(line
          (indentation 0 3)
          '(:register (:char-class #\* #\_ #\-))
-         'optional-spaces
+         'optional-whitespace
          '(:greedy-repetition 2 nil
            (:sequence (:back-reference 1) optional-whitespace)))
        ,(lambda (context break-string)
