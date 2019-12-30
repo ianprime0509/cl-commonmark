@@ -53,15 +53,7 @@ similarly to the processing of BLOCK-STARTS. If SCANNER matches, the
 line is interpreted as a setext heading underline for a heading of
 level LEVEL.
 
-This behavior is controlled by the PARSE-SETEXT-UNDERLINE function.")
-   (lazy-continuation
-    :initarg :lazy-continuation
-    :initform nil
-    :type boolean
-    :accessor lazy-continuation-p
-    :documentation "Whether we're currently looking for a lazy continuation line.
-This affects whether certain block structures can be recognized in a
-paragraph, such as a setext heading line."))
+This behavior is controlled by the PARSE-SETEXT-UNDERLINE function."))
   (:documentation "Context for parsing a document."))
 
 (defun make-context (&key block-starts setext-underlines)
@@ -236,12 +228,7 @@ empty)."
             (ppcre:scan-to-strings scanner line)
           (when match
             (let ((reg-list (map 'list #'identity registers)))
-              ;; TODO: this is an ugly hack; the lazy continuation
-              ;; state never should have been part of the context to
-              ;; begin with (it should be an optional argument to
-              ;; ACCEPT-LINE)
-              (letf (((lazy-continuation-p context) nil))
-                (return (apply function context reg-list))))))))
+              (return (apply function context reg-list)))))))
 
 (defun parse-setext-underline (line context)
   "Attempt to parse LINE as a setext heading underline using CONTEXT.
@@ -253,11 +240,11 @@ is not a setext heading underline."
 
 ;;; Generic node methods
 
-(defgeneric accept-line (line block context)
+(defgeneric accept-line (line block context &optional continuation-p)
   (:documentation "Ask BLOCK to accept LINE as additional contents.
 Return two values, ACTION and OBJECT. ACTION is a request for the
 parent of this block to perform some action with OBJECT. Valid actions
-are as follopws:
+are as follows:
 
 nil - do nothing with OBJECT.
 
@@ -270,7 +257,10 @@ met.
 
 :REPLACE-SELF - replace this block with OBJECT.
 
-:DELETE-SELF - do nothing with OBJECT and delete this block."))
+:DELETE-SELF - do nothing with OBJECT and delete this block.
+
+If CONTINUATION-P is non-nil, process LINE as a lazy continuation
+line."))
 
 (defun handle-new-block (line context)
   "Return the values expected for ACCEPT-LINE given that LINE needs to be made into a new block.
@@ -295,7 +285,7 @@ definitions) when closing themselves."))
 ;;; Block nodes
 
 (defclass block-node (node)
-  ((can-accept-continuation
+  ((can-accept-continuation-p
     :initform nil
     :type boolean
     :reader can-accept-continuation-p
@@ -315,12 +305,12 @@ directly."))
   (print-unreadable-object (block stream :type t)
     (format stream ":CLOSED ~s" (closedp block))))
 
-(defmethod accept-line :around (line (block block-node) context)
+(defmethod accept-line :around (line (block block-node) context
+                                &optional continuation-p)
   "Handle a new line for a closed block or a block that cannot handle lazy continuation lines."
   ;; If LINE is a lazy continuation line and BLOCK cannot handle such
   ;; lines, BLOCK should be closed
-  (when (and (lazy-continuation-p context)
-             (not (can-accept-continuation-p block)))
+  (when (and continuation-p (not (can-accept-continuation-p block)))
     (close-block block context))
   (if (closedp block)
       (handle-new-block line context)
@@ -336,11 +326,13 @@ directly."))
     :initform t))
   (:documentation "A block node that does not accept any additional contents after being created, such as a thematic break."))
 
-(defmethod accept-line (line (block atomic-block-node) context)
+(defmethod accept-line (line (block atomic-block-node) context
+                        &optional continuation-p)
   "A stub implementation of ACCEPT-LINE.
 This method will never be called because of the around method defined
 for BLOCK-NODE; atomic blocks are always closed."
-  (values nil nil))
+  (declare (ignore line block context continuation-p))
+  (error "Attempted to accept a line for an atomic block node"))
 
 (defclass thematic-break (atomic-block-node)
   ()
@@ -399,7 +391,9 @@ This vector must be adjustable."))
     (with-accessors ((text text) (closed closedp)) object
       (format stream "~s :CLOSED ~s" text closed))))
 
-(defmethod accept-line (line (block text-block-node) context)
+(defmethod accept-line (line (block text-block-node) context
+                        &optional continuation-p)
+  (declare (ignore context continuation-p))
   (with-accessors ((text text)) block
     (add-raw-text (concatenate 'string
                                (unless (emptyp text) (string #\Newline))
@@ -408,7 +402,7 @@ This vector must be adjustable."))
   (values nil nil))
 
 (defclass paragraph (text-block-node)
-  ((can-accept-continuation
+  ((can-accept-continuation-p
     :initform t))
   (:documentation "A paragraph."))
 
@@ -421,15 +415,15 @@ ACCEPT-LINE with FIRST-LINE."
       (accept-line first-line block context))
     block))
 
-(defmethod accept-line (line (block paragraph) context)
+(defmethod accept-line (line (block paragraph) context
+                        &optional continuation-p)
   (when (blankp line)
     (close-block block context)
     (return-from accept-line (values nil nil)))
   ;; Check for setext heading underlines if we're not processing a
   ;; lazy continuation line and if we already have some content in the
   ;; paragraph
-  (unless (or (lazy-continuation-p context)
-              (zerop (length (text block))))
+  (unless (or continuation-p (emptyp (text block)))
     (when-let ((level (parse-setext-underline line context)))
       (close-block block context)
       (return-from accept-line
@@ -468,7 +462,9 @@ ACCEPT-LINE with FIRST-LINE."
       (accept-line first-line block context))
     block))
 
-(defmethod accept-line (line (block indented-code-block) context)
+(defmethod accept-line (line (block indented-code-block) context
+                        &optional continuation-p)
+  (declare (ignore continuation-p))
   (multiple-value-bind (stripped-line indentation)
       (strip-indentation line 4)
     (if (or (>= indentation 4) (blankp line))
@@ -500,8 +496,8 @@ ACCEPT-LINE with FIRST-LINE."
     :type (integer 3)
     :reader opening-fence-length
     :documentation "The length of the opening code fence.")
-   (tilde-fence
-    :initarg :tilde-fence
+   (tilde-fence-p
+    :initarg :tilde-fence-p
     :initform (error "Must specify if this is a tilde code fence")
     :type boolean
     :reader tilde-fence-p
@@ -509,13 +505,13 @@ ACCEPT-LINE with FIRST-LINE."
   (:documentation "A fenced code block (block of code surrounded by backtick or tilde fences)."))
 
 (defun make-fenced-code-block (info-string first-line opening-fence-indentation
-                               opening-fence-length tilde-fence context)
+                               opening-fence-length tilde-fence-p context)
   "Return a new fenced code block with FIRST-LINE as its first line."
   (let ((block (make-instance 'fenced-code-block
                               :info-string info-string
                               :opening-fence-indentation opening-fence-indentation
                               :opening-fence-length opening-fence-length
-                              :tilde-fence tilde-fence)))
+                              :tilde-fence-p tilde-fence-p)))
     (when first-line
       (accept-line first-line block context))
     block))
@@ -528,7 +524,7 @@ ACCEPT-LINE with FIRST-LINE."
       block
     (print-unreadable-object (block stream :type t)
       (format stream "~s :INFO-STRING ~s :OPENING-FENCE-INDENTATION ~s ~
-:OPENING-FENCE-LENGTH ~s :TILDE-FENCE ~s :CLOSED ~s"
+:OPENING-FENCE-LENGTH ~s :TILDE-FENCE-P ~s :CLOSED ~s"
               text info indent length tilde closed))))
 
 (defparameter *backtick-closing-fence-pattern*
@@ -539,7 +535,9 @@ ACCEPT-LINE with FIRST-LINE."
   (ppcre:create-scanner "^ {0,3}(~+)[ \\t]*$")
   "A scanner for closing tilde code fences.")
 
-(defmethod accept-line (line (block fenced-code-block) context)
+(defmethod accept-line (line (block fenced-code-block) context
+                        &optional continuation-p)
+  (declare (ignore continuation-p))
   (let ((closing-scanner (if (tilde-fence-p block)
                              *tilde-closing-fence-pattern*
                              *backtick-closing-fence-pattern*)))
@@ -565,7 +563,7 @@ ACCEPT-LINE with FIRST-LINE."
     :initform (ppcre:create-scanner "^[ \\t]*$")
     :reader end-line-scanner
     :documentation "A scanner matching the ending line of this block.")
-   (include-end-line
+   (include-end-line-p
     :initarg :include-end-line-p
     :initform nil
     :type boolean
@@ -573,17 +571,19 @@ ACCEPT-LINE with FIRST-LINE."
     :documentation "Whether to include the ending line in this block's text."))
   (:documentation "A block of raw HTML."))
 
-(defun make-html-block (first-line end-line-scanner include-end-line context)
+(defun make-html-block (first-line end-line-scanner include-end-line-p context)
   "Return a new HTML block with FIRST-LINE as its first line."
   (let ((block (make-instance 'html-block
                               :end-line-scanner
                               (ppcre:create-scanner end-line-scanner)
-                              :include-end-line-p include-end-line)))
+                              :include-end-line-p include-end-line-p)))
     (when first-line
       (accept-line first-line block context))
     block))
 
-(defmethod accept-line (line (block html-block) context)
+(defmethod accept-line (line (block html-block) context
+                        &optional continuation-p)
+  (declare (ignore continuation-p))
   (when (ppcre:scan (end-line-scanner block) line)
     (when (or (emptyp (text block))
               (and (stringp (first-elt (text block)))
@@ -595,7 +595,7 @@ ACCEPT-LINE with FIRST-LINE."
   (call-next-method))
 
 (defclass container-block-node (block-node)
-  ((can-accept-continuation
+  ((can-accept-continuation-p
     :initform t)
    (children
     :initarg :children
@@ -613,7 +613,8 @@ ACCEPT-LINE with FIRST-LINE."
     (with-accessors ((children children) (closed closedp)) object
       (format stream "~s :CLOSED ~s" children closed))))
 
-(defmethod accept-line (line (block container-block-node) context)
+(defmethod accept-line (line (block container-block-node) context
+                        &optional continuation-p)
   "Ask the last child of BLOCK to accept LINE or create a new child from LINE if there are none."
   (with-accessors ((children children)) block
     (if (emptyp children)
@@ -621,10 +622,10 @@ ACCEPT-LINE with FIRST-LINE."
           (vector-push-extend new-block children)
           (values nil nil))
         (multiple-value-bind (action object)
-            (accept-line line (last-elt children) context)
+            (accept-line line (last-elt children) context continuation-p)
           (ecase action
             ((nil)
-             (when (lazy-continuation-p context)
+             (when continuation-p
                ;; If we're looking for a lazy continuation line here,
                ;; that means the opening condition for this block was
                ;; not satisfied
@@ -633,7 +634,7 @@ ACCEPT-LINE with FIRST-LINE."
             (:continue
              (values :continue nil))
             (:accept
-             (if (lazy-continuation-p context)
+             (if continuation-p
                  (progn
                    (close-block block context)
                    (values :accept object))
@@ -673,13 +674,13 @@ ACCEPT-LINE with FIRST-LINE."
                             (:group
                              (:greedy-repetition 0 nil :everything))))))
 
-(defmethod accept-line (line (block block-quote) context)
+(defmethod accept-line (line (block block-quote) context
+                        &optional continuation-p)
   (multiple-value-bind (match registers)
       (ppcre:scan-to-strings *block-quote-scanner* line)
     (let ((line (if match (aref registers 0) line)))
-      (letf (((lazy-continuation-p context) (or (lazy-continuation-p context)
-                                                (not match))))
-        (call-next-method line block context)))))
+      (let ((continuation-p (or continuation-p (not match))))
+        (call-next-method line block context continuation-p)))))
 
 (defclass list-item (container-block-node)
   ((continuation-indent

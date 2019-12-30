@@ -30,7 +30,7 @@
                            (make-instance 'fenced-code-block
                                           :info-string info-string
                                           :opening-fence-length fence-length
-                                          :tilde-fence tilde
+                                          :tilde-fence-p tilde
                                           :text (vector text)
                                           :closed t
                                           :opening-fence-indentation indent))
